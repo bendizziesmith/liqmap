@@ -4,3 +4,6 @@ dist/
 *.local
 test-results/
 tsconfig.tsbuildinfo
+
+# Local Netlify folder
+.netlify
