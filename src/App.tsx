@@ -56,7 +56,7 @@ export default function App() {
   );
 
   // Fold the forming candle into the map so a sweep clears its bars without a reload.
-  const { map, loading, error } = useLiveHeatmap(fetched, formingCandle);
+  const { map, error } = useLiveHeatmap(fetched, formingCandle);
 
   // A closed candle needs a refetch: the new one can extend the price range, which means
   // rebucketing every column rather than re-seeding the last.
@@ -117,8 +117,10 @@ export default function App() {
 
       <main className="main">
         {tab === 'heatmap' ? (
+          /* Keep the previous map during a background refetch: useHeatmap retains it, so
+             blanking to a "Loading" overlay would hide a perfectly usable chart. */
           <HeatmapCanvas
-            map={loading ? null : map}
+            map={map}
             enabledTiers={enabledTiers}
             livePrice={livePrice}
             interval={interval}
