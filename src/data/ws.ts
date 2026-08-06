@@ -141,8 +141,22 @@ export class BybitSocket {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
-    this.ws?.close();
+
+    const ws = this.ws;
     this.ws = null;
+
+    if (ws) {
+      ws.onmessage = null;
+      ws.onclose = null;
+      if (ws.readyState === 0) {
+        // Closing mid-handshake makes browsers log a warning, and StrictMode's dev
+        // double-mount hits this on every load. Let the handshake finish, then hang up.
+        ws.onopen = () => ws.close();
+      } else {
+        ws.close();
+      }
+    }
+
     this.setStatus('closed');
   }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { topBands, nearestBand } from './bands';
+import { topBands, nearestBand, bandsWithin } from './bands';
 import type { Grid } from './types';
 
 const grid: Grid = { min: 0, max: 110, nBuckets: 1100, step: 0.1 };
@@ -63,6 +63,32 @@ describe('topBands', () => {
 
   it('returns nothing for an empty column', () => {
     expect(topBands([columnOf([])], [true], grid, 1, 0, 10)).toEqual([]);
+  });
+});
+
+describe('bandsWithin', () => {
+  const bands = [
+    { price: 50, score: 100 },
+    { price: 95, score: 10 },
+    { price: 100, score: 5 },
+    { price: 108, score: 8 },
+    { price: 200, score: 90 },
+  ];
+
+  it('keeps only bands inside the window', () => {
+    expect(bandsWithin(bands, 100, 10).map((b) => b.price)).toEqual([95, 100, 108]);
+  });
+
+  it('is inclusive at the window edge', () => {
+    expect(bandsWithin([{ price: 110, score: 1 }], 100, 10)).toHaveLength(1);
+  });
+
+  it('returns everything when price is unknown', () => {
+    expect(bandsWithin(bands, 0, 10)).toEqual(bands);
+  });
+
+  it('returns an empty list when nothing is near', () => {
+    expect(bandsWithin(bands, 1000, 1)).toEqual([]);
   });
 });
 

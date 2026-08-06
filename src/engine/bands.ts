@@ -61,6 +61,18 @@ export function topBands(
 }
 
 /**
+ * Restrict bands to a percentage window around price.
+ *
+ * Levels far below a long uptrend never get swept, so they accumulate into a shelf that is
+ * always the strongest thing on the grid. Scoring against that shelf would make every band
+ * near price look negligible, so relative strength is judged within a neighbourhood.
+ */
+export function bandsWithin(bands: Band[], price: number, pct: number): Band[] {
+  if (price <= 0) return bands;
+  return bands.filter((b) => Math.abs((b.price - price) / price) * 100 <= pct);
+}
+
+/**
  * The closest band to `price` that is at least `minScore` strong.
  *
  * `side` restricts the search to bands above or below price, which is what the watchlist

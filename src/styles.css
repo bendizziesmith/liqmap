@@ -1,0 +1,759 @@
+/* ── design tokens ─────────────────────────────────────────────────────────
+   OLED-dark trading terminal. Amber accent is deliberate: it sits inside the
+   inferno colormap's own range, so chrome and heat read as one system.
+   Type is the system UI stack with tabular numerals — no webfont download
+   (offline PWA, Capacitor) and prices that do not jitter as digits change. */
+:root {
+  --bg: #07070b;
+  --panel: #0d0f16;
+  --panel-2: #141822;
+  --line: #232a38;
+  --line-soft: #1a1f2b;
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --dim: #64748b;
+  --accent: #f59e0b;
+  --accent-soft: rgba(245, 158, 11, 0.14);
+  --up: #5eead4;
+  --down: #f87171;
+  --danger: #ef4444;
+
+  --r-sm: 5px;
+  --r-md: 8px;
+  --z-drawer: 50;
+  --z-scrim: 40;
+  --z-tip: 30;
+
+  --tap: 44px;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+/* Prices and scores must not reflow as digits change. */
+.watch__price,
+.watch__dist,
+.status,
+.tip,
+.alerts,
+.input {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── app frame ─────────────────────────────────────────────────────────── */
+.app {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  height: 100%;
+  /* Respect the iOS notch now so the Capacitor wrap needs no layout changes. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+/* ── toolbar ───────────────────────────────────────────────────────────── */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.bar__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 4px;
+}
+
+.bar__mark {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: linear-gradient(140deg, #f59e0b, #dd2f6e 55%, #4c1d95);
+}
+
+.bar__name {
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.bar__custom {
+  display: flex;
+  gap: 4px;
+}
+
+.bar__actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* ── segmented controls ────────────────────────────────────────────────── */
+.seg {
+  display: flex;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 2px;
+  gap: 2px;
+  /* Flex items refuse to shrink past their content by default. Without these the toolbar
+     clips instead of wrapping whenever the font renders wider than expected. */
+  min-width: 0;
+}
+
+.seg__btn {
+  min-height: 30px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 550;
+  cursor: pointer;
+  transition:
+    background-color 180ms ease,
+    color 180ms ease;
+}
+
+.seg__btn:hover {
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--text);
+}
+
+.seg__btn[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.seg--tiers .seg__btn[aria-pressed='false'] {
+  /* Off tiers stay legible: colour alone must not carry the state. */
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
+/* ── buttons + inputs ──────────────────────────────────────────────────── */
+.btn {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-weight: 550;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease;
+}
+
+.btn:hover {
+  background: #1b2130;
+  border-color: #2e3748;
+}
+
+.btn--icon {
+  width: 34px;
+  padding: 0;
+  color: var(--muted);
+}
+
+.btn--icon:hover {
+  color: var(--text);
+}
+
+.btn--ghost {
+  background: transparent;
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1c1300;
+  font-weight: 650;
+}
+
+.btn--primary:hover {
+  background: #fbbf24;
+  border-color: #fbbf24;
+}
+
+.input {
+  min-height: 32px;
+  width: 108px;
+  padding: 0 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.input::placeholder {
+  color: var(--dim);
+}
+
+/* ── watchlist ─────────────────────────────────────────────────────────── */
+.watch {
+  display: flex;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.watch::-webkit-scrollbar {
+  display: none;
+}
+
+.watch__item {
+  display: grid;
+  grid-template-columns: auto;
+  gap: 1px;
+  min-width: 104px;
+  min-height: var(--tap);
+  padding: 5px 10px;
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.watch__item:hover {
+  border-color: #2e3748;
+}
+
+.watch__item[aria-current='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.watch__sym {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.watch__item[aria-current='true'] .watch__sym {
+  color: var(--accent);
+}
+
+.watch__price {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.watch__dist {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.watch__dist[data-hot] {
+  color: var(--accent);
+  font-weight: 650;
+}
+
+/* ── chart ─────────────────────────────────────────────────────────────── */
+.main {
+  position: relative;
+  min-height: 0;
+}
+
+.chart {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}
+
+.chart__canvas {
+  /* Absolute, so the canvas never contributes to its wrapper's layout size. The wrapper is
+     what ResizeObserver measures; if the canvas sized it, the explicit width we set from
+     that measurement would hold the wrapper open and the chart could grow but never shrink. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.chart__empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--dim);
+  pointer-events: none;
+}
+
+.chart__refit {
+  position: absolute;
+  left: 10px;
+  bottom: 30px;
+  min-height: 30px;
+  padding: 0 10px;
+  background: rgba(13, 15, 22, 0.88);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+
+.chart__refit:hover {
+  color: var(--text);
+}
+
+/* ── crosshair tooltip ─────────────────────────────────────────────────── */
+.tip {
+  position: absolute;
+  z-index: var(--z-tip);
+  min-width: 168px;
+  padding: 8px 10px;
+  background: rgba(9, 11, 17, 0.94);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  font-size: 11px;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+}
+
+.tip__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  color: var(--muted);
+  padding: 1px 0;
+}
+
+.tip__row[data-off='true'] {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
+.tip__row--head {
+  color: var(--text);
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+}
+
+.tip__row--total {
+  color: var(--accent);
+  border-top: 1px solid var(--line-soft);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.tip__note {
+  margin-top: 5px;
+  color: var(--dim);
+  font-size: 10px;
+}
+
+/* ── status bar ────────────────────────────────────────────────────────── */
+.status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+}
+
+.status__item {
+  white-space: nowrap;
+}
+
+.status__err {
+  color: var(--danger);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.pill__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dim);
+}
+
+.pill[data-state='live'] {
+  color: var(--up);
+  border-color: rgba(94, 234, 212, 0.35);
+}
+
+.pill[data-state='live'] .pill__dot {
+  background: var(--up);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.pill[data-state='connecting'] .pill__dot,
+.pill[data-state='reconnecting'] .pill__dot {
+  background: var(--accent);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.pill[data-state='connecting'],
+.pill[data-state='reconnecting'] {
+  color: var(--accent);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.tape {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+  overflow: hidden;
+}
+
+.tape__item {
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+.tape__item[data-side='long'] {
+  color: var(--down);
+}
+
+.tape__item[data-side='short'] {
+  color: var(--up);
+}
+
+/* ── settings drawer ───────────────────────────────────────────────────── */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-scrim);
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-drawer);
+  width: min(360px, 100vw);
+  padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  overflow-y: auto;
+  animation: slide-in 220ms ease;
+}
+
+@keyframes slide-in {
+  from {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+}
+
+.drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.drawer__head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.drawer__section {
+  padding: 14px 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.drawer__section h3 {
+  margin: 0 0 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.field {
+  display: block;
+  margin-bottom: 14px;
+}
+
+.field--row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: var(--tap);
+  cursor: pointer;
+}
+
+.field--row input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.field__label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--muted);
+}
+
+.field__label strong {
+  color: var(--accent);
+}
+
+.field__hint {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.field input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+  /* Full-height tap target: a 22px slider is fiddly with a thumb. */
+  height: var(--tap);
+}
+
+.note {
+  margin: 0;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.note--warn {
+  color: var(--accent);
+  margin-top: 10px;
+}
+
+.alerts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 11px;
+}
+
+.alerts li {
+  display: flex;
+  gap: 9px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--muted);
+}
+
+.alerts li [data-dir='up'] {
+  color: var(--up);
+}
+
+.alerts li [data-dir='down'] {
+  color: var(--down);
+}
+
+.alerts__score {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+/* ── phone ─────────────────────────────────────────────────────────────
+   Everything stays on one screen; only the chart may grow. Controls keep
+   44px targets so the future iOS build needs no separate layout. */
+@media (max-width: 720px) {
+  .bar {
+    gap: 7px;
+    padding: 7px 9px;
+  }
+
+  /* The generic .seg rule must come first: the modifier rules below share its specificity,
+     so a later generic declaration would win and reset their flex-basis. */
+  .seg {
+    flex: 1 1 auto;
+    justify-content: space-between;
+  }
+
+  /* Explicit rows rather than letting five controls compete for one line: brand+actions,
+     then symbols, then the custom input, then interval and tiers. */
+  .bar__brand {
+    order: 1;
+  }
+
+  .bar__actions {
+    order: 2;
+    margin-left: auto;
+  }
+
+  .seg--symbols {
+    order: 3;
+    flex: 1 1 100%;
+  }
+
+  .bar__custom {
+    order: 4;
+    flex: 1 1 100%;
+  }
+
+  .seg--intervals {
+    order: 5;
+  }
+
+  .seg--tiers {
+    order: 6;
+  }
+
+  .seg__btn {
+    flex: 1;
+    /* 40px inside a 2px-padded parent clears the 44px touch target for the control as a
+       whole, without a four-row toolbar eating the chart. */
+    min-height: 40px;
+    padding: 0 6px;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .input,
+  .bar__custom .btn {
+    min-height: 40px;
+  }
+
+  /* Interval and tier share one row, so their labels get the tightest treatment that still
+     renders "15m" and "25x" in full rather than ellipsing them. */
+  .seg--intervals .seg__btn,
+  .seg--tiers .seg__btn {
+    padding: 0 2px;
+    font-size: 11px;
+  }
+
+  .input {
+    flex: 1;
+    width: auto;
+  }
+
+  .watch__item {
+    min-width: 92px;
+  }
+
+  .tape {
+    display: none; /* the liquidation tape needs width it does not have here */
+  }
+
+  .drawer {
+    width: 100vw;
+  }
+
+  .chart__refit {
+    bottom: 34px;
+    min-height: var(--tap);
+  }
+}
+
+@media (max-width: 380px) {
+  .seg__btn {
+    padding: 0 4px;
+    font-size: 11px;
+  }
+
+  .watch__item {
+    min-width: 84px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

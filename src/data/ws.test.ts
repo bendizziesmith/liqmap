@@ -194,6 +194,33 @@ describe('reconnection', () => {
     expect(FakeSocket.instances).toHaveLength(3);
   });
 
+  it('waits for the handshake before closing a still-connecting socket', () => {
+    // Closing mid-handshake makes browsers log a console warning, and React StrictMode
+    // mounts twice in dev, so this path runs on every page load.
+    const s = new BybitSocket();
+    s.connect(['BTCUSDT']);
+    const sock = last();
+    expect(sock.readyState).toBe(0);
+
+    s.close();
+    expect(sock.closed).toBe(false);
+
+    sock.open();
+    expect(sock.closed).toBe(true);
+  });
+
+  it('does not reconnect after a deferred close completes', () => {
+    const s = new BybitSocket();
+    s.connect(['BTCUSDT']);
+    const sock = last();
+    s.close();
+    sock.open();
+    sock.die();
+
+    vi.advanceTimersByTime(60_000);
+    expect(FakeSocket.instances).toHaveLength(1);
+  });
+
   it('does not reconnect after a deliberate close', () => {
     const s = new BybitSocket();
     s.connect(['BTCUSDT']);

@@ -11,6 +11,11 @@ export default defineConfig({
     target: 'es2020',
     sourcemap: true,
   },
+  server: {
+    // Named rather than disabling the host check outright: lets a containerised browser
+    // (and a phone on the LAN) reach the dev server without dropping the protection.
+    allowedHosts: ['host.docker.internal', 'localhost'],
+  },
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
