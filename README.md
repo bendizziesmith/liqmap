@@ -34,8 +34,8 @@ erases the levels inside its own high–low range, because price trading through
 those positions are already liquidated. That vertical edge is the moment the level got
 swept, and it is the single most informative thing on the chart.
 
-Scores are **relative**, not dollars. They rank levels against each other on the current
-screen; they are not exchange-reported position sizes.
+Figures are **estimated USD notional**, labelled "est." throughout. They are modelled from
+candle turnover, not exchange-reported open positions — see Caveats.
 
 ## Liquidation Map
 
@@ -53,7 +53,7 @@ recent candle's clearing pass — reshaped into a price profile. There is no sec
 - Everything **left of the dashed marker is long liquidations**, everything right is shorts.
 - The **cumulative curve** sums outward from current price in each direction: how much total
   liquidation price would pass through to reach a given level.
-- **Export CSV** gives `price_from, price_to, L1..L4, cumulative` per mode.
+- **Export CSV** gives `price_from, price_to, L1..L4, cumulative` per mode, in est. USD.
 
 You will usually see a **gap either side of current price**. That is not missing data — the
 latest candle cleared its own high–low range, so nothing is pending where price just traded.
@@ -69,6 +69,9 @@ deep purple is the lowest leverage, bright yellow the highest.
 
 - **Wheel** zooms time, **shift/ctrl+wheel** zooms price, **drag** pans, **double-click**
   refits. On touch: one finger pans, two fingers pinch.
+- **Drag an axis to zoom it**: vertically on the price axis (up zooms in, TradingView
+  convention), horizontally on the time axis. Wheel over an axis zooms that axis alone, and
+  double-clicking an axis refits just that one.
 - **Tier buttons** (3×/5×/10×/25× on swing, 10×/25×/50×/100× on scalping) toggle which
   leverage cohorts are painted. This is render-only — nothing is recomputed.
 - **Watchlist** shows each symbol's live price and the distance to its nearest strong band.
@@ -166,8 +169,13 @@ which build a browser is actually running.
 
 ## Caveats
 
-- Liquidation levels are **inferred** from price, volume and open interest. Exchanges do not
-  publish per-position leverage, so this is a model, not ground truth.
+- Liquidation levels and their USD figures are **inferred** from price, turnover and open
+  interest. Exchanges do not publish per-position leverage, so this is a model, not ground
+  truth.
+- The USD scale is **flow, not stock**. A candle's turnover is attributed to the levels it
+  implies, summed over the whole window (1000 candles). Cumulative totals therefore run well
+  above current open interest — they measure notional that traded into those levels over
+  months, not positions sitting there now.
 - Levels far from price are never swept, so they accumulate into bright shelves near the
   grid edges. That is the model behaving correctly, but it means band strength is judged
   within ±12% of price (`BAND_WINDOW_PCT`) so those shelves do not drown out everything else.

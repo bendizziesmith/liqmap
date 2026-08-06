@@ -342,7 +342,9 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
         dragRef.current = { x: e.clientX, range, axis: onAxis };
       }
     },
-    [range],
+    // plot.h decides the axis region, so a stale copy would misclassify the drag after a
+    // resize — every pointerdown below the plot would read as a pan.
+    [range, plot.h],
   );
 
   const onPointerMove = useCallback(
