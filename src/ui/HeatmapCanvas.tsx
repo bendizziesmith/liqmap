@@ -563,13 +563,13 @@ export function HeatmapCanvas({
       return lo + (t - cs[lo].start) / span;
     };
 
-    const ticks = timeTicks(timeAtCol(view.c0), timeAtCol(view.c1), plot.w);
+    const timeTickList = timeTicks(timeAtCol(view.c0), timeAtCol(view.c1), plot.w);
     setTickDebug((prev) => {
-      const next = ticks.map((t) => `${t.label}@${t.time}`).join('|');
+      const next = timeTickList.map((t) => `${t.label}@${t.time}`).join('|');
       return prev === next ? prev : next;
     });
 
-    for (const tick of ticks) {
+    for (const tick of timeTickList) {
       const x = (colAtTime(tick.time) - view.c0) * colW;
       if (x < 0 || x > plot.w) continue;
 
