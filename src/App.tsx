@@ -3,7 +3,8 @@ import type { Interval } from './engine/types';
 import { tiersForMode, modeForInterval } from './engine/tiers';
 import { topBands, bandsWithin } from './engine/bands';
 import { lastColumn } from './engine/profile';
-import { calibrationScale, sumActive } from './engine/calibrate';
+import { priceToBucket } from './engine/grid';
+import { calibrationScales, sumActiveSides } from './engine/calibrate';
 import { scaleBandsTo100 } from './engine/alerts';
 import { BAND_WINDOW_PCT, DEFAULT_SETTINGS, DEFAULT_VIEW, PRESET_SYMBOLS, type Tab } from './config';
 import { HeatmapCanvas } from './ui/HeatmapCanvas';
@@ -85,9 +86,11 @@ export default function App() {
    * scaled to total the reported open interest. Display only — no engine value moves.
    */
   const usdScale = useMemo(() => {
-    if (!map || map.nCols === 0) return 1;
-    return calibrationScale(openInterest[symbol] ?? 0, sumActive(lastColumn(map)));
-  }, [map, openInterest, symbol]);
+    if (!map || map.nCols === 0) return { long: 1, short: 1 };
+    const price = livePrice ?? map.candles[map.nCols - 1].close;
+    const priceBucket = priceToBucket(map.grid, price);
+    return calibrationScales(openInterest[symbol] ?? 0, sumActiveSides(lastColumn(map), priceBucket));
+  }, [map, openInterest, symbol, livePrice]);
 
   const alerts = useAlerts(symbol, livePrice, focusBands, settings, formatPrice);
 

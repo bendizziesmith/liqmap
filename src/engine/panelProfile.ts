@@ -103,17 +103,47 @@ export function buildPanelProfile(
     ? clampedRowOf(currentPrice)
     : Math.floor(nRows / 2);
 
-  // Upward from price is a decreasing row index: higher prices, where shorts liquidate.
+  /*
+   * Cumulative runs over the WHOLE loaded book, not just the rows on screen.
+   *
+   * "How much would liquidate between price and here" is a property of the book, so zooming
+   * must not change it. Bar heights stay visible-only — those are about rendering the rows
+   * you can actually see — but the cumulative walks every bucket outward from the price
+   * bucket and each visible row reports the running total at its own price.
+   */
+  const priceBucket = currentPrice != null && currentPrice > 0
+    ? Math.min(grid.nBuckets - 1, Math.max(0, Math.floor((currentPrice - grid.min) / grid.step)))
+    : Math.floor(grid.nBuckets / 2);
+
+  const bucketTotal = (b: number): number => {
+    let sum = 0;
+    for (let t = 0; t < nTiers; t++) {
+      if (enabled[t]) sum += activeTiers[t][b];
+    }
+    return sum;
+  };
+
+  const cumLongAt = new Float64Array(grid.nBuckets);
   let running = 0;
-  for (let r = priceRow - 1; r >= 0; r--) {
-    running += rows[r].total;
-    rows[r].cumShort = running;
+  for (let b = priceBucket - 1; b >= 0; b--) {
+    running += bucketTotal(b);
+    cumLongAt[b] = running;
   }
 
+  const cumShortAt = new Float64Array(grid.nBuckets);
   running = 0;
-  for (let r = priceRow + 1; r < nRows; r++) {
-    running += rows[r].total;
-    rows[r].cumLong = running;
+  for (let b = priceBucket + 1; b < grid.nBuckets; b++) {
+    running += bucketTotal(b);
+    cumShortAt[b] = running;
+  }
+
+  for (let r = 0; r < nRows; r++) {
+    const b = Math.min(
+      grid.nBuckets - 1,
+      Math.max(0, Math.floor((rows[r].price - grid.min) / grid.step)),
+    );
+    if (r < priceRow) rows[r].cumShort = cumShortAt[b];
+    else if (r > priceRow) rows[r].cumLong = cumLongAt[b];
   }
 
   let rowMax = 0;

@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LiquidationProfile, ProfileBin } from '../engine/profile';
 import { COLORMAPS, type ColormapId } from '../engine/classes';
 import { formatUsd, formatUsdPrecise } from '../engine/usd';
+import type { UsdScales } from '../engine/calibrate';
 import type { PriceFormatter } from './hooks/usePriceFormat';
-import { capturePointer, releasePointer } from './gesture';
+import { capturePointer, releasePointer, zoomDomain } from './gesture';
 import {
   BRUSH_HANDLE_PX,
   brushPixelRange,
@@ -13,6 +14,7 @@ import {
   xToBin,
   type BrushZone,
 } from './brush';
+import { wheelZoomFactor } from './axis';
 
 const AXIS_H = 20; // price labels under the plot
 const AXIS_W = 46; // cumulative labels on the right
@@ -30,8 +32,13 @@ interface Props {
   onExport: () => void;
   formatPrice: PriceFormatter;
   colormapId: ColormapId;
-  /** Multiplier denominating displayed USD in open interest. */
-  usdScale: number;
+  /** Per-side multipliers denominating displayed USD in open interest. */
+  usdScale: UsdScales;
+  /**
+   * Identity of the underlying book. The default window is re-derived only when this
+   * changes — never on the new profile object a live price tick produces.
+   */
+  datasetKey: string;
 }
 
 interface Hover {
@@ -51,6 +58,7 @@ export function ProfileChart({
   formatPrice,
   colormapId,
   usdScale,
+  datasetKey,
 }: Props) {
   const ramp = COLORMAPS[colormapId] ?? COLORMAPS.inferno;
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -66,17 +74,36 @@ export function ProfileChart({
 
   const nBins = profile?.bins.length ?? 0;
 
+  /**
+   * Default window, applied on first load, symbol/timeframe change, or explicit reset.
+   *
+   * Deliberately NOT keyed on `profile`: the Map rebuilds that object on every live price
+   * tick, so keying on it reset the user's brush about once a second and made the window
+   * look both jumpy and immovable. It opens around current price rather than the whole
+   * grid because the far tiers pile up unswept mass at the edges.
+   */
+  const profileRef = useRef(profile);
+  profileRef.current = profile;
+
   useEffect(() => {
-    // Open on a window around current price rather than the whole grid: the far tiers pile
-    // up unswept mass at the edges that would flatten everything near price.
-    if (!profile || nBins === 0) {
+    const p = profileRef.current;
+    const n = p?.bins.length ?? 0;
+    if (!p || n === 0) {
       setRange(null);
       return;
     }
+    const span = Math.max(20, Math.round(n * 0.34));
+    const i0 = Math.max(0, p.priceBinIndex - Math.round(span / 2));
+    setRange([i0, Math.min(n, i0 + span)]);
+  }, [datasetKey]);
+
+  // First data for a dataset whose key was already set before the profile arrived.
+  useEffect(() => {
+    if (range !== null || !profile || nBins === 0) return;
     const span = Math.max(20, Math.round(nBins * 0.34));
     const i0 = Math.max(0, profile.priceBinIndex - Math.round(span / 2));
     setRange([i0, Math.min(nBins, i0 + span)]);
-  }, [profile, nBins]);
+  }, [profile, nBins, range]);
 
   useEffect(() => {
     const measure = () => {
@@ -246,7 +273,9 @@ export function ProfileChart({
       const v = (visibleMax.cum * g) / 4;
       // Clamp the baseline: the top tick sits at y=0 and would be sliced in half.
       const y = Math.min(plot.h - 6, Math.max(6, yOfCum(v)));
-      ctx.fillText(formatUsd(v * usdScale), plot.w + 5, y);
+      // Axis ticks describe the cumulative curves, which are per-side; label with the
+      // larger scale so neither side's curve overshoots its own axis.
+      ctx.fillText(formatUsd(v * Math.max(usdScale.long, usdScale.short)), plot.w + 5, y);
     }
 
     // Y-axis title, rotated up the left edge.
@@ -326,6 +355,31 @@ export function ProfileChart({
    * the page like ordinary content, and a page you cannot scroll because a chart swallowed
    * the gesture is worse than one you have to aim at a strip to zoom.
    */
+  /**
+   * Wheel zooms the price axis on the same gentle curve as the heatmap (~1.078x a notch).
+   * `touch-action: pan-y` is kept so a finger still scrolls the page on mobile — only the
+   * mouse wheel is claimed.
+   */
+  const onWheel = useCallback(
+    (e: React.WheelEvent) => {
+      if (!range || nBins === 0) return;
+      const rect = canvasRef.current!.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      setRange((prev) =>
+        prev
+          ? zoomDomain(
+              prev,
+              wheelZoomFactor(e.deltaY, e.deltaMode),
+              mx / Math.max(1, plot.w),
+              [0, nBins],
+              MIN_BINS,
+            )
+          : prev,
+      );
+    },
+    [range, nBins, plot.w],
+  );
+
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       if (!range || nBins === 0) return;
@@ -406,6 +460,13 @@ export function ProfileChart({
     [brushTop, resetRange],
   );
 
+  // A level belongs to the side of the book it sits on: below price it would liquidate
+  // longs, above it shorts, and each side is anchored to open interest separately.
+  const hoverScale =
+    hover && profile
+      ? hover.index < profile.priceBinIndex ? usdScale.long : usdScale.short
+      : usdScale.long;
+
   const hoverSide =
     hover && profile
       ? hover.index < profile.priceBinIndex
@@ -448,6 +509,8 @@ export function ProfileChart({
           ref={canvasRef}
           className="panel__canvas"
           style={{ width: size.w, height: size.h, cursor, touchAction: 'pan-y' }}
+          data-brush={range ? `${range[0]},${range[1]}` : undefined}
+          onWheel={onWheel}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={endPointer}
@@ -484,27 +547,27 @@ export function ProfileChart({
                   {t}×
                 </span>
                 <span>
-                  {hover.bin.tiers[i] > 0 ? formatUsdPrecise(hover.bin.tiers[i] * usdScale) : '—'}
+                  {hover.bin.tiers[i] > 0 ? formatUsdPrecise(hover.bin.tiers[i] * hoverScale) : '—'}
                 </span>
               </div>
             ))}
             <div className="tip__row tip__row--total">
               <span>total est.</span>
-              <strong>{hover.bin.total > 0 ? formatUsdPrecise(hover.bin.total * usdScale) : '—'}</strong>
+              <strong>{hover.bin.total > 0 ? formatUsdPrecise(hover.bin.total * hoverScale) : '—'}</strong>
             </div>
             <div className="tip__row">
               <span>
                 <i className="tip__swatch" style={{ background: '#4ade80' }} />
                 Cumulative Longs
               </span>
-              <span>{hover.bin.cumLong > 0 ? formatUsd(hover.bin.cumLong * usdScale) : '—'}</span>
+              <span>{hover.bin.cumLong > 0 ? formatUsd(hover.bin.cumLong * usdScale.long) : '—'}</span>
             </div>
             <div className="tip__row">
               <span>
                 <i className="tip__swatch" style={{ background: '#f59e0b' }} />
                 Cumulative Shorts
               </span>
-              <span>{hover.bin.cumShort > 0 ? formatUsd(hover.bin.cumShort * usdScale) : '—'}</span>
+              <span>{hover.bin.cumShort > 0 ? formatUsd(hover.bin.cumShort * usdScale.short) : '—'}</span>
             </div>
             <div className="tip__note">estimated USD, not exchange-reported</div>
           </div>

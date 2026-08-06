@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sumActive, calibrationScale } from './calibrate';
+import { sumActive, calibrationScale, sumActiveSides, calibrationScales } from './calibrate';
 
 function tiers(values: number[][]): Float32Array[] {
   return values.map((v) => Float32Array.from(v));
@@ -62,5 +62,66 @@ describe('calibrationScale', () => {
       expect(Number.isFinite(s)).toBe(true);
       expect(s).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('sumActiveSides', () => {
+  // Ten buckets; price sits at index 5.
+  const tiers = [Float32Array.from([1, 1, 1, 1, 1, 9, 2, 2, 2, 2])];
+
+  it('splits the book at the price bucket', () => {
+    const { long, short } = sumActiveSides(tiers, 5);
+    expect(long).toBe(5);
+    expect(short).toBe(8);
+  });
+
+  it('excludes the price bucket itself, which is being traded through', () => {
+    const { long, short } = sumActiveSides(tiers, 5);
+    expect(long + short).toBe(13); // the 9 at the price bucket belongs to neither
+  });
+
+  it('sums across every tier', () => {
+    const two = [Float32Array.from([1, 0, 0, 0]), Float32Array.from([3, 0, 0, 0])];
+    expect(sumActiveSides(two, 2).long).toBe(4);
+  });
+
+  it('reports zero on the empty side when price sits at an edge', () => {
+    expect(sumActiveSides(tiers, 0).long).toBe(0);
+    expect(sumActiveSides(tiers, 9).short).toBe(0);
+  });
+});
+
+describe('calibrationScales', () => {
+  const OI = 225_500_000;
+
+  it('anchors each side to the full open interest, not half of it', () => {
+    // Every contract has a long holder and a short holder, so both sides total OI.
+    const sides = { long: 3e9, short: 1e9 };
+    const s = calibrationScales(OI, sides);
+    expect(sides.long * s.long).toBeCloseTo(OI, 2);
+    expect(sides.short * s.short).toBeCloseTo(OI, 2);
+  });
+
+  it('gives the thinner side the larger multiplier', () => {
+    const s = calibrationScales(OI, { long: 4e9, short: 1e9 });
+    expect(s.short).toBeGreaterThan(s.long);
+  });
+
+  it('roughly doubles what a single combined scale produced', () => {
+    // The old maths divided OI by both sides at once, undercounting each by ~2x.
+    const sides = { long: 2e9, short: 2e9 };
+    const combined = calibrationScale(OI, sides.long + sides.short);
+    const perSide = calibrationScales(OI, sides);
+    expect(perSide.long / combined).toBeCloseTo(2, 6);
+  });
+
+  it('falls back to 1 per side when open interest is unknown', () => {
+    expect(calibrationScales(0, { long: 1e9, short: 1e9 })).toEqual({ long: 1, short: 1 });
+  });
+
+  it('falls back to 1 on a side that is empty', () => {
+    const s = calibrationScales(OI, { long: 1e9, short: 0 });
+    expect(s.short).toBe(1);
+    expect(s.long).toBeLessThan(1);
   });
 });

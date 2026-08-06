@@ -3,7 +3,7 @@ import type { Interval } from '../engine/types';
 import { lastColumn, liquidationProfile } from '../engine/profile';
 import { csvFilename, profileToCsv } from '../engine/profileCsv';
 import { MAP_BINS, MAP_SCALP_INTERVAL, MAP_SWING_INTERVAL } from '../config';
-import { calibrationScale } from '../engine/calibrate';
+import { calibrationScales, type UsdScales } from '../engine/calibrate';
 import { useHeatmap } from './hooks/useHeatmap';
 import { ProfileChart } from './ProfileChart';
 import type { PriceFormatter } from './hooks/usePriceFormat';
@@ -52,10 +52,15 @@ function useMode(
   }, [map, livePrice]);
 
   const usdScale = useMemo(() => {
-    if (!profile) return 1;
-    // Every bin total together is the active book for this timeframe.
-    const active = profile.bins.reduce((a, b) => a + b.total, 0);
-    return calibrationScale(oiValue, active);
+    if (!profile) return { long: 1, short: 1 };
+    // Split the book at the price bin: each side anchors to the full OI on its own.
+    let long = 0;
+    let short = 0;
+    profile.bins.forEach((b, i) => {
+      if (i < profile.priceBinIndex) long += b.total;
+      else if (i > profile.priceBinIndex) short += b.total;
+    });
+    return calibrationScales(oiValue, { long, short });
   }, [profile, oiValue]);
 
   return { profile, loading, error, tiers: map?.tiers ?? [], usdScale };
@@ -73,7 +78,7 @@ export function MapView({
   const swing = useMode(symbol, MAP_SWING_INTERVAL, livePrice, nonce, openInterestValue);
 
   const exportMode = useCallback(
-    (mode: 'scalping' | 'swing', interval: Interval, profile: typeof scalp.profile, scale: number) => {
+    (mode: 'scalping' | 'swing', interval: Interval, profile: typeof scalp.profile, scale: UsdScales) => {
       if (!profile) return;
       download(csvFilename(symbol, mode, interval), profileToCsv(profile, formatPrice, scale));
     },
@@ -92,6 +97,7 @@ export function MapView({
         formatPrice={formatPrice}
         colormapId={colormapId}
         usdScale={scalp.usdScale}
+        datasetKey={`${symbol}:${MAP_SCALP_INTERVAL}:${nonce}`}
       />
 
       <ProfileChart
@@ -104,6 +110,7 @@ export function MapView({
         formatPrice={formatPrice}
         colormapId={colormapId}
         usdScale={swing.usdScale}
+        datasetKey={`${symbol}:${MAP_SWING_INTERVAL}:${nonce}`}
       />
 
       <p className="map__help">

@@ -21,7 +21,7 @@ function num(v: number): string {
 export function profileToCsv(
   profile: LiquidationProfile,
   formatPrice: (p: number) => string = num,
-  usdScale = 1,
+  usdScale: { long: number; short: number } = { long: 1, short: 1 },
 ): string {
   const lines = [CSV_HEADER];
 
@@ -29,13 +29,15 @@ export function profileToCsv(
     const bin = profile.bins[i];
     const cumulative = i < profile.priceBinIndex ? bin.cumLong : bin.cumShort;
 
+    // Each row is scaled by the side of the book it sits on.
+    const scale = i < profile.priceBinIndex ? usdScale.long : usdScale.short;
     const tiers: string[] = [];
     for (let t = 0; t < TIER_COLUMNS; t++) {
-      tiers.push(num((bin.tiers[t] ?? 0) * usdScale));
+      tiers.push(num((bin.tiers[t] ?? 0) * scale));
     }
 
     lines.push(
-      [formatPrice(bin.priceFrom), formatPrice(bin.priceTo), ...tiers, num(cumulative * usdScale)].join(','),
+      [formatPrice(bin.priceFrom), formatPrice(bin.priceTo), ...tiers, num(cumulative * scale)].join(','),
     );
   }
 

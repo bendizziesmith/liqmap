@@ -7,6 +7,7 @@ import { lastColumn } from '../engine/profile';
 import { needsOlder } from '../engine/history';
 import { buildPanelProfile } from '../engine/panelProfile';
 import { formatUsd, formatUsdPrecise } from '../engine/usd';
+import type { UsdScales } from '../engine/calibrate';
 import type { PriceFormatter } from './hooks/usePriceFormat';
 import { priceToY, yToPrice } from './scale';
 import { axisZoomFactor, scaleAbout, wheelZoomFactor } from './axis';
@@ -42,8 +43,8 @@ interface Props {
   showProfile: boolean;
   formatPrice: PriceFormatter;
   colormapId: ColormapId;
-  /** Multiplier that denominates displayed USD in open interest. */
-  usdScale: number;
+  /** Per-side multipliers denominating displayed USD in open interest. */
+  usdScale: UsdScales;
   /** Changes only when the dataset identity changes, so a backfill does not refit. */
   resetKey: string;
   onNeedOlder: () => void;
@@ -707,6 +708,12 @@ export function HeatmapCanvas({
   const ramp = COLORMAPS[colormapId] ?? COLORMAPS.inferno;
   const hoverTotal = hover ? hover.scores.reduce((a, s, i) => a + (enabledTiers[i] ? s : 0), 0) : 0;
   const panelRow = hover && panel ? panel.rows[hover.row] : null;
+  // A level belongs to the side of the book it sits on, and each side is anchored to open
+  // interest separately.
+  const panelRowScale =
+    panelRow && panel ? (hover!.row > panel.priceRow ? usdScale.long : usdScale.short) : usdScale.long;
+  const plotRowScale =
+    hover && livePrice != null ? (hover.price < livePrice ? usdScale.long : usdScale.short) : usdScale.long;
 
   return (
     <div className="chart" ref={wrapRef}>
@@ -744,20 +751,20 @@ export function HeatmapCanvas({
                 <i className="tip__swatch" style={{ background: ramp.tierColors[i] }} />
                 {t}×
               </span>
-              <span>{panelRow.tiers[i] > 0 ? formatUsdPrecise(panelRow.tiers[i] * usdScale) : '—'}</span>
+              <span>{panelRow.tiers[i] > 0 ? formatUsdPrecise(panelRow.tiers[i] * panelRowScale) : '—'}</span>
             </div>
           ))}
           <div className="tip__row tip__row--total">
             <span>total est.</span>
-            <strong>{panelRow.total > 0 ? formatUsdPrecise(panelRow.total * usdScale) : '—'}</strong>
+            <strong>{panelRow.total > 0 ? formatUsdPrecise(panelRow.total * panelRowScale) : '—'}</strong>
           </div>
           <div className="tip__row">
             <span style={{ color: LONG_COLOR }}>cum. longs</span>
-            <span>{panelRow.cumLong > 0 ? formatUsd(panelRow.cumLong * usdScale) : '—'}</span>
+            <span>{panelRow.cumLong > 0 ? formatUsd(panelRow.cumLong * usdScale.long) : '—'}</span>
           </div>
           <div className="tip__row">
             <span style={{ color: SHORT_COLOR }}>cum. shorts</span>
-            <span>{panelRow.cumShort > 0 ? formatUsd(panelRow.cumShort * usdScale) : '—'}</span>
+            <span>{panelRow.cumShort > 0 ? formatUsd(panelRow.cumShort * usdScale.short) : '—'}</span>
           </div>
           <div className="tip__note">estimated USD, not exchange-reported</div>
         </div>
@@ -781,12 +788,12 @@ export function HeatmapCanvas({
                 <i className="tip__swatch" style={{ background: ramp.tierColors[i] }} />
                 {t}×
               </span>
-              <span>{hover.scores[i] > 0 ? formatUsd(hover.scores[i] * usdScale) : '—'}</span>
+              <span>{hover.scores[i] > 0 ? formatUsd(hover.scores[i] * plotRowScale) : '—'}</span>
             </div>
           ))}
           <div className="tip__row tip__row--total">
             <span>total est.</span>
-            <strong>{hoverTotal > 0 ? formatUsdPrecise(hoverTotal * usdScale) : '—'}</strong>
+            <strong>{hoverTotal > 0 ? formatUsdPrecise(hoverTotal * plotRowScale) : '—'}</strong>
           </div>
           <div className="tip__note">estimated USD, not exchange-reported</div>
         </div>
@@ -800,7 +807,7 @@ export function HeatmapCanvas({
           {ramp.classColors.map((c, i) => (
             <span className="legend__item" key={i}>
               <i style={{ background: `rgb(${c[0]},${c[1]},${c[2]})`, opacity: classAlpha(i) / 255 }} />
-              {i === 0 ? `< ${formatUsd(breaksForLegend[0] * usdScale)}` : `${formatUsd(breaksForLegend[i - 1] * usdScale)}+`}
+              {i === 0 ? `< ${formatUsd(breaksForLegend[0] * usdScale.long)}` : `${formatUsd(breaksForLegend[i - 1] * usdScale.long)}+`}
             </span>
           ))}
         </div>

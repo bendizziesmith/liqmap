@@ -54,7 +54,10 @@ describe('visible window', () => {
     expect(p.rowMax).toBeCloseTo(10, 6);
   });
 
-  it('keeps cumulative curves to what is on screen', () => {
+  it('never reaches mass lying beyond the far edge of the window', () => {
+    // Cumulative counts the book between price and each visible row's own price. A level at
+    // bucket 50 sits below every row in a 500-700 window, so no visible row reaches it —
+    // that is different from clipping the sum to the viewport.
     const tiers = [new Float32Array(N_BUCKETS)];
     tiers[0][50] = 1_000_000;
     tiers[0][600] = 10;
@@ -164,5 +167,62 @@ describe('degenerate input', () => {
     const p = buildPanelProfile(flatTiers(), ALL, grid, 500, 600, 100, 5);
     expect(p.priceRow).toBeGreaterThanOrEqual(0);
     expect(p.priceRow).toBeLessThan(p.rows.length);
+  });
+});
+
+describe('cumulative is a property of the book, not the viewport', () => {
+  const tiers = [new Float32Array(N_BUCKETS)];
+  for (let b = 0; b < N_BUCKETS; b++) tiers[0][b] = 1;
+
+  /** Cumulative reported at a fixed price, under a given zoom window. */
+  const cumAt = (p0: number, p1: number, price: number, at: number) => {
+    const p = buildPanelProfile(tiers, ALL, grid, p0, p1, 200, price);
+    let best = p.rows[0];
+    let bestDist = Infinity;
+    for (const r of p.rows) {
+      const d = Math.abs(r.price - at);
+      if (d < bestDist) { bestDist = d; best = r; }
+    }
+    return { long: best.cumLong, short: best.cumShort };
+  };
+
+  /**
+   * Agreement is within a bucket or two, not exact: each zoom level gives its rows a
+   * different price span, so reading a step function at the row nearest a target price
+   * lands on a slightly different bucket. 1% covers that; a viewport-dependent cumulative
+   * would differ by far more.
+   */
+  const within1Pct = (a: number, b: number) => Math.abs(a - b) / Math.max(a, b) < 0.01;
+
+  it('reports the same cumulative at a price whether zoomed in or out', () => {
+    const wide = cumAt(0, 1100, 550, 300);
+    const tight = cumAt(200, 700, 550, 300);
+    expect(within1Pct(tight.long, wide.long)).toBe(true);
+  });
+
+  it('holds on the short side too', () => {
+    const wide = cumAt(0, 1100, 550, 800);
+    const tight = cumAt(400, 900, 550, 800);
+    expect(within1Pct(tight.short, wide.short)).toBe(true);
+  });
+
+  it('would fail loudly if cumulative were summed over visible rows only', () => {
+    // A visible-only sum at the tight window would reach ~50 units, not ~250.
+    const tight = cumAt(200, 700, 550, 300);
+    expect(tight.long).toBeGreaterThan(200);
+  });
+
+  it('counts levels outside the viewport, which a visible-only sum would miss', () => {
+    // Price 550, level at 300, but the window starts at 280 — the mass between 280 and 300
+    // is off screen on one side yet still lies between price and the level.
+    const clipped = cumAt(280, 620, 550, 300);
+    expect(clipped.long).toBeGreaterThan(200);
+  });
+
+  it('reaches the whole side total at the far extreme', () => {
+    const p = buildPanelProfile(tiers, ALL, grid, 0, 1100, 200, 550);
+    const maxLong = Math.max(...p.rows.map((r) => r.cumLong));
+    // Everything below the price bucket: 1 unit per bucket.
+    expect(maxLong).toBeGreaterThan(N_BUCKETS * 0.45);
   });
 });
