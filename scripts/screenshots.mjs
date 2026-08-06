@@ -105,6 +105,41 @@ for (const shot of shots) {
   // Let the live price and the first paint settle.
   await new Promise((r) => setTimeout(r, 2500));
 
+  // Map shots: narrow each brush window so the handles and the zoomed view are visible.
+  if (shot.view.tab === 'map') {
+    await page.evaluate(async () => {
+      const BRUSH_H = 26, AXIS_H = 20, BRUSH_GAP = 6;
+      for (const cv of document.querySelectorAll('.panel__canvas')) {
+        const dpr = window.devicePixelRatio || 1;
+        const plotH = cv.height / dpr - AXIS_H - BRUSH_H - BRUSH_GAP;
+        const brushTop = plotH + AXIS_H + BRUSH_GAP;
+        const rect = cv.getBoundingClientRect();
+        const y = Math.round((brushTop + BRUSH_H / 2) * dpr);
+        const row = cv.getContext('2d').getImageData(0, y, cv.width, 1).data;
+        const xs = [];
+        for (let x = 0; x < cv.width; x++) {
+          const i = x * 4;
+          if (row[i] > 230 && row[i + 1] > 140 && row[i + 1] < 190 && row[i + 2] < 60) xs.push(x / dpr);
+        }
+        if (!xs.length) continue;
+        const [x0, x1] = [Math.min(...xs), Math.max(...xs)];
+        const by = rect.top + brushTop + BRUSH_H / 2;
+        const from = rect.left + x1;
+        const to = rect.left + x0 + (x1 - x0) * 0.45;
+        const ev = (t, x) => cv.dispatchEvent(new PointerEvent(t, {
+          pointerId: 900, clientX: x, clientY: by, bubbles: true, isPrimary: true }));
+        ev('pointerdown', from);
+        for (let s = 1; s <= 8; s++) {
+          ev('pointermove', from + (to - from) * s / 8);
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        ev('pointerup', to);
+        await new Promise((r) => setTimeout(r, 300));
+      }
+    });
+    await new Promise((r) => setTimeout(r, 900));
+  }
+
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   );
