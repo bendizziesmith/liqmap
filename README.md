@@ -87,11 +87,13 @@ src/
     grid.ts         1100-bucket price axis
     oi.ts           open-interest alignment and the ΔOI weight multiplier
     seed.ts         per-candle clear + seed of the live level vector
-    build.ts        the walk: clear → seed → snapshot, one column per candle
+    build.ts        the walk: clear → seed → snapshot, plus reseedLast for live ticks
     normalize.ts    p99.7 percentile → vmax, gamma curve
     bands.ts        column → ranked price levels
     profile.ts      last column → binned, tier-stacked profile + cumulative curves
     profileCsv.ts   profile → CSV
+    panelProfile.ts active levels → per-screen-row bars, cumulative, hot pockets
+    usd.ts          $12.4K / $3.2M / $1.1B formatting
     alerts.ts       relative band scaling, proximity + cooldown logic
     colormap.ts     inferno ramp + the four tier colours
   data/       network only
@@ -100,6 +102,8 @@ src/
     cache.ts        TTL memo shared by the watchlist
   ui/         React
     scale.ts        the one price↔Y transform, shared by chart and side panel
+    axis.ts         axis drag-to-zoom maths
+    gesture.ts      pinch maths + safe pointer capture
     HeatmapCanvas   heat raster, candles, crosshair, docked profile strip
     ProfileChart    one Map panel: bars, cumulative, brush, tooltip
     MapView         Scalping + Swing panels, CSV export
@@ -111,11 +115,13 @@ src/
 For each closed candle, oldest first:
 
 1. **Clear** every bucket inside `[low, high]`. Price traded there, so those positions are gone.
-2. **Seed** the levels the candle implies. Three entry anchors — close `0.45`, high `0.275`,
-   low `0.275` — each weighted by
-   `min(turnover / medianTurnover, 5) × clamp(1 + 8·max(ΔOI/OI, 0), 1, 3)`
-   and split across four tiers as `[0.35, 0.30, 0.20, 0.15]`.
+2. **Seed** the levels the candle implies, in USD. Three entry anchors — close `0.45`,
+   high `0.275`, low `0.275` — each carrying
+   `turnover × clamp(1 + 8·max(ΔOI/OI, 0), 1, 3)`
+   split across four tiers as `[0.35, 0.30, 0.20, 0.15]`, then **halved between the long and
+   short side** so a candle's dollars are counted once rather than twice.
    Long liquidation at `entry·(1 − 1/L)`, short at `entry·(1 + 1/L)`.
+   With no clearing, the grid sums to exactly `Σ turnover × oiFactor`.
 3. **Snapshot** the live vector into column `t`.
 
 One `Float32Array` per tier (`nCols × 1100`), so tier toggles never trigger a rebuild.
@@ -136,10 +142,11 @@ perpetuals; the custom input accepts any of them.
 npm test
 ```
 
-145 tests, none of which touch the network — `fetch` and `WebSocket` are stubbed. The engine
-is pure, so it is tested directly against synthetic candles. The load-bearing case is the
-clearing invariant: a level seeded at candle 0 must still be present at candle 2 and exactly
-zero at the candle whose range covers it.
+277 tests, none of which touch the network — `fetch` and `WebSocket` are stubbed. The engine
+is pure, so it is tested directly against synthetic candles. The load-bearing cases are the
+clearing invariant (a level seeded at candle 0 survives to candle 2 and is exactly zero at
+the candle whose range covers it), USD conservation, and cumulative monotonicity outward
+from current price.
 
 ## PWA and iOS
 
