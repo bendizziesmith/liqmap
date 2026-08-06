@@ -1027,3 +1027,19 @@ body {
   display: flex;
   gap: 6px;
 }
+
+/* Backfill indicator, pinned to the edge the new data arrives at. */
+.chart__backfill {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 5px 10px;
+  background: rgba(9, 11, 17, 0.9);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--muted);
+  font-size: 11px;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+}

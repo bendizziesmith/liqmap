@@ -12,6 +12,8 @@ export type ConnectionStatus = 'idle' | 'connecting' | 'live' | 'reconnecting' |
 export interface TickerUpdate {
   symbol: string;
   price: number;
+  /** Present only on frames that carry it — ticker updates are deltas. */
+  openInterestValue?: number;
 }
 
 export interface LiquidationEvent {
@@ -107,10 +109,17 @@ export class BybitSocket {
     if (!msg.topic) return;
 
     if (msg.topic.startsWith('tickers.')) {
-      const d = msg.data as { symbol?: string; lastPrice?: string } | undefined;
+      const d = msg.data as
+        | { symbol?: string; lastPrice?: string; openInterestValue?: string }
+        | undefined;
       // Ticker frames are deltas: most carry no price at all.
       if (d?.lastPrice != null && d.symbol) {
-        this.handlers.onTicker?.({ symbol: d.symbol, price: Number(d.lastPrice) });
+        this.handlers.onTicker?.({
+          symbol: d.symbol,
+          price: Number(d.lastPrice),
+          openInterestValue:
+            d.openInterestValue != null ? Number(d.openInterestValue) : undefined,
+        });
       }
       return;
     }

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Interval } from './engine/types';
 import { tiersForMode, modeForInterval } from './engine/tiers';
 import { topBands, bandsWithin } from './engine/bands';
+import { lastColumn } from './engine/profile';
+import { calibrationScale, sumActive } from './engine/calibrate';
 import { scaleBandsTo100 } from './engine/alerts';
 import { BAND_WINDOW_PCT, DEFAULT_SETTINGS, DEFAULT_VIEW, PRESET_SYMBOLS, type Tab } from './config';
 import { HeatmapCanvas } from './ui/HeatmapCanvas';
@@ -37,6 +39,7 @@ export default function App() {
   const profileVisible = showProfile && !narrow;
 
   const fetched = useHeatmap(symbol, interval, nonce + closedNonce);
+  const { loadOlder, loadingOlder, prependedCount } = fetched;
 
   // A custom symbol joins the live feed and the watchlist strip alongside the presets.
   const symbols = useMemo(
@@ -49,7 +52,7 @@ export default function App() {
   const formatFor = usePriceFormats(symbols);
   const formatPrice = formatFor(symbol);
 
-  const { prices, status, tape, formingCandle, candleClosed } = useLive(
+  const { prices, status, tape, formingCandle, candleClosed, openInterest } = useLive(
     symbols,
     symbol,
     KLINE_INTERVAL[interval],
@@ -73,6 +76,18 @@ export default function App() {
     const last = livePrice ?? map.candles[map.nCols - 1].close;
     return scaleBandsTo100(bandsWithin(raw, last, BAND_WINDOW_PCT));
   }, [map, enabledTiers, livePrice]);
+
+  /**
+   * Displayed USD is denominated in open interest.
+   *
+   * Raw bucket values are cumulative turnover that flowed through a level over the whole
+   * window; only currently-open positions can actually liquidate, so the active book is
+   * scaled to total the reported open interest. Display only — no engine value moves.
+   */
+  const usdScale = useMemo(() => {
+    if (!map || map.nCols === 0) return 1;
+    return calibrationScale(openInterest[symbol] ?? 0, sumActive(lastColumn(map)));
+  }, [map, openInterest, symbol]);
 
   const alerts = useAlerts(symbol, livePrice, focusBands, settings, formatPrice);
 
@@ -127,6 +142,11 @@ export default function App() {
             showProfile={profileVisible}
             formatPrice={formatPrice}
             colormapId={colormap}
+            usdScale={usdScale}
+            resetKey={`${symbol}:${interval}:${nonce + closedNonce}`}
+            onNeedOlder={loadOlder}
+            loadingOlder={loadingOlder}
+            prependedCount={prependedCount}
           />
         ) : (
           <MapView
@@ -135,6 +155,7 @@ export default function App() {
             nonce={nonce}
             formatPrice={formatPrice}
             colormapId={colormap}
+            openInterestValue={openInterest[symbol] ?? 0}
           />
         )}
       </main>

@@ -30,6 +30,8 @@ interface Props {
   onExport: () => void;
   formatPrice: PriceFormatter;
   colormapId: ColormapId;
+  /** Multiplier denominating displayed USD in open interest. */
+  usdScale: number;
 }
 
 interface Hover {
@@ -48,6 +50,7 @@ export function ProfileChart({
   onExport,
   formatPrice,
   colormapId,
+  usdScale,
 }: Props) {
   const ramp = COLORMAPS[colormapId] ?? COLORMAPS.inferno;
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -243,7 +246,7 @@ export function ProfileChart({
       const v = (visibleMax.cum * g) / 4;
       // Clamp the baseline: the top tick sits at y=0 and would be sliced in half.
       const y = Math.min(plot.h - 6, Math.max(6, yOfCum(v)));
-      ctx.fillText(formatUsd(v), plot.w + 5, y);
+      ctx.fillText(formatUsd(v * usdScale), plot.w + 5, y);
     }
 
     // Y-axis title, rotated up the left edge.
@@ -314,7 +317,7 @@ export function ProfileChart({
       ctx.stroke();
       ctx.restore();
     }
-  }, [profile, range, plot, size, visibleMax, hover, nBins, formatPrice, ramp]);
+  }, [profile, range, plot, size, visibleMax, hover, nBins, formatPrice, ramp, usdScale]);
 
   /**
    * All range control lives on the brush.
@@ -481,27 +484,27 @@ export function ProfileChart({
                   {t}×
                 </span>
                 <span>
-                  {hover.bin.tiers[i] > 0 ? formatUsdPrecise(hover.bin.tiers[i]) : '—'}
+                  {hover.bin.tiers[i] > 0 ? formatUsdPrecise(hover.bin.tiers[i] * usdScale) : '—'}
                 </span>
               </div>
             ))}
             <div className="tip__row tip__row--total">
               <span>total est.</span>
-              <strong>{hover.bin.total > 0 ? formatUsdPrecise(hover.bin.total) : '—'}</strong>
+              <strong>{hover.bin.total > 0 ? formatUsdPrecise(hover.bin.total * usdScale) : '—'}</strong>
             </div>
             <div className="tip__row">
               <span>
                 <i className="tip__swatch" style={{ background: '#4ade80' }} />
                 Cumulative Longs
               </span>
-              <span>{hover.bin.cumLong > 0 ? formatUsd(hover.bin.cumLong) : '—'}</span>
+              <span>{hover.bin.cumLong > 0 ? formatUsd(hover.bin.cumLong * usdScale) : '—'}</span>
             </div>
             <div className="tip__row">
               <span>
                 <i className="tip__swatch" style={{ background: '#f59e0b' }} />
                 Cumulative Shorts
               </span>
-              <span>{hover.bin.cumShort > 0 ? formatUsd(hover.bin.cumShort) : '—'}</span>
+              <span>{hover.bin.cumShort > 0 ? formatUsd(hover.bin.cumShort * usdScale) : '—'}</span>
             </div>
             <div className="tip__note">estimated USD, not exchange-reported</div>
           </div>

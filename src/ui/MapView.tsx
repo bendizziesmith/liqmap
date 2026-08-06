@@ -3,6 +3,7 @@ import type { Interval } from '../engine/types';
 import { lastColumn, liquidationProfile } from '../engine/profile';
 import { csvFilename, profileToCsv } from '../engine/profileCsv';
 import { MAP_BINS, MAP_SCALP_INTERVAL, MAP_SWING_INTERVAL } from '../config';
+import { calibrationScale } from '../engine/calibrate';
 import { useHeatmap } from './hooks/useHeatmap';
 import { ProfileChart } from './ProfileChart';
 import type { PriceFormatter } from './hooks/usePriceFormat';
@@ -14,6 +15,8 @@ interface Props {
   nonce: number;
   formatPrice: PriceFormatter;
   colormapId: ColormapId;
+  /** Open-interest notional, the anchor for each panel's displayed USD. */
+  openInterestValue: number;
 }
 
 /** Trigger a client-side download. No server round trip, so it works offline too. */
@@ -28,7 +31,13 @@ function download(filename: string, body: string): void {
   URL.revokeObjectURL(url);
 }
 
-function useMode(symbol: string, interval: Interval, livePrice: number | null, nonce: number) {
+function useMode(
+  symbol: string,
+  interval: Interval,
+  livePrice: number | null,
+  nonce: number,
+  oiValue: number,
+) {
   const { map, loading, error } = useHeatmap(symbol, interval, nonce);
 
   const profile = useMemo(() => {
@@ -42,17 +51,31 @@ function useMode(symbol: string, interval: Interval, livePrice: number | null, n
     });
   }, [map, livePrice]);
 
-  return { profile, loading, error, tiers: map?.tiers ?? [] };
+  const usdScale = useMemo(() => {
+    if (!profile) return 1;
+    // Every bin total together is the active book for this timeframe.
+    const active = profile.bins.reduce((a, b) => a + b.total, 0);
+    return calibrationScale(oiValue, active);
+  }, [profile, oiValue]);
+
+  return { profile, loading, error, tiers: map?.tiers ?? [], usdScale };
 }
 
-export function MapView({ symbol, livePrice, nonce, formatPrice, colormapId }: Props) {
-  const scalp = useMode(symbol, MAP_SCALP_INTERVAL, livePrice, nonce);
-  const swing = useMode(symbol, MAP_SWING_INTERVAL, livePrice, nonce);
+export function MapView({
+  symbol,
+  livePrice,
+  nonce,
+  formatPrice,
+  colormapId,
+  openInterestValue,
+}: Props) {
+  const scalp = useMode(symbol, MAP_SCALP_INTERVAL, livePrice, nonce, openInterestValue);
+  const swing = useMode(symbol, MAP_SWING_INTERVAL, livePrice, nonce, openInterestValue);
 
   const exportMode = useCallback(
-    (mode: 'scalping' | 'swing', interval: Interval, profile: typeof scalp.profile) => {
+    (mode: 'scalping' | 'swing', interval: Interval, profile: typeof scalp.profile, scale: number) => {
       if (!profile) return;
-      download(csvFilename(symbol, mode, interval), profileToCsv(profile, formatPrice));
+      download(csvFilename(symbol, mode, interval), profileToCsv(profile, formatPrice, scale));
     },
     [symbol, formatPrice],
   );
@@ -65,9 +88,10 @@ export function MapView({ symbol, livePrice, nonce, formatPrice, colormapId }: P
         profile={scalp.profile}
         loading={scalp.loading}
         error={scalp.error}
-        onExport={() => exportMode('scalping', MAP_SCALP_INTERVAL, scalp.profile)}
+        onExport={() => exportMode('scalping', MAP_SCALP_INTERVAL, scalp.profile, scalp.usdScale)}
         formatPrice={formatPrice}
         colormapId={colormapId}
+        usdScale={scalp.usdScale}
       />
 
       <ProfileChart
@@ -76,9 +100,10 @@ export function MapView({ symbol, livePrice, nonce, formatPrice, colormapId }: P
         profile={swing.profile}
         loading={swing.loading}
         error={swing.error}
-        onExport={() => exportMode('swing', MAP_SWING_INTERVAL, swing.profile)}
+        onExport={() => exportMode('swing', MAP_SWING_INTERVAL, swing.profile, swing.usdScale)}
         formatPrice={formatPrice}
         colormapId={colormapId}
+        usdScale={swing.usdScale}
       />
 
       <p className="map__help">

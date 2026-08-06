@@ -13,6 +13,8 @@ export interface LiveState {
   formingCandle: Candle | null;
   /** Bumped whenever a candle closes, so the caller can refetch for the new one. */
   candleClosed: number;
+  /** Open-interest notional per symbol, in USD. Anchors the displayed USD scale. */
+  openInterest: Record<string, number>;
 }
 
 const TAPE_LIMIT = 40;
@@ -33,6 +35,7 @@ export function useLive(symbols: string[], focus: string, klineInterval?: string
   const [tape, setTape] = useState<LiquidationEvent[]>([]);
   const [formingCandle, setFormingCandle] = useState<Candle | null>(null);
   const [candleClosed, setCandleClosed] = useState(0);
+  const [openInterest, setOpenInterest] = useState<Record<string, number>>({});
   const focusRef = useRef(focus);
   focusRef.current = focus;
   const lastKlineAt = useRef(0);
@@ -48,8 +51,13 @@ export function useLive(symbols: string[], focus: string, klineInterval?: string
 
     const socket = new BybitSocket({
       onStatus: setStatus,
-      onTicker: ({ symbol, price }) => {
+      onTicker: ({ symbol, price, openInterestValue }) => {
         setPrices((p) => (p[symbol] === price ? p : { ...p, [symbol]: price }));
+        if (openInterestValue != null && openInterestValue > 0) {
+          setOpenInterest((o) =>
+            o[symbol] === openInterestValue ? o : { ...o, [symbol]: openInterestValue },
+          );
+        }
       },
       onLiquidation: (e) => {
         if (e.symbol !== focusRef.current) return;
@@ -78,6 +86,20 @@ export function useLive(symbols: string[], focus: string, klineInterval?: string
     return () => socket.close();
   }, [key, focus, klineInterval]);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchTicker(focus)
+      .then((t) => {
+        if (!cancelled && t && t.openInterestValue > 0) {
+          setOpenInterest((o) => ({ ...o, [t.symbol]: t.openInterestValue }));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [focus]);
+
   // REST fallback, active only while the socket is down.
   useEffect(() => {
     if (status === 'live') return;
@@ -93,6 +115,11 @@ export function useLive(symbols: string[], focus: string, klineInterval?: string
         for (const t of results) if (t) next[t.symbol] = t.price;
         return next;
       });
+      setOpenInterest((o) => {
+        const next = { ...o };
+        for (const t of results) if (t && t.openInterestValue > 0) next[t.symbol] = t.openInterestValue;
+        return next;
+      });
     };
 
     void poll();
@@ -103,5 +130,5 @@ export function useLive(symbols: string[], focus: string, klineInterval?: string
     };
   }, [key, status]);
 
-  return { prices, status, tape, formingCandle, candleClosed };
+  return { prices, status, tape, formingCandle, candleClosed, openInterest };
 }

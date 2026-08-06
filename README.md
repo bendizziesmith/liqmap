@@ -22,6 +22,7 @@ npm run dev       # http://localhost:5177
 | `npm run build` | Typecheck and produce a static `dist/` |
 | `npm run preview` | Serve the production build |
 | `npm run screenshots` | Recapture `docs/screenshots/` from a running dev server |
+| `node scripts/verify-backfill.mjs` | Pan back through history, reporting candles/date/heap per page |
 
 ## What you are looking at
 
@@ -34,8 +35,12 @@ erases the levels inside its own high–low range, because price trading through
 those positions are already liquidated. That vertical edge is the moment the level got
 swept, and it is the single most informative thing on the chart.
 
-Figures are **estimated USD notional**, labelled "est." throughout. They are modelled from
-candle turnover, not exchange-reported open positions — see Caveats.
+Figures are **estimated USD notional**, labelled "est." throughout, and **calibrated to open
+interest**: liquidations can only come from positions that are currently open, so the active
+unswept book is scaled to total the symbol's reported `openInterestValue`. Raw engine values
+are cumulative turnover over the whole window, which reaches billions — an order of magnitude
+more than could ever actually liquidate. The scale is one display multiplier; no engine value
+or rendering normalisation changes.
 
 ## Liquidation Map
 
@@ -54,6 +59,10 @@ recent candle's clearing pass — reshaped into a price profile. There is no sec
 - The **cumulative curve** sums outward from current price in each direction: how much total
   liquidation price would pass through to reach a given level.
 - **Export CSV** gives `price_from, price_to, L1..L4, cumulative` per mode, in est. USD.
+
+**History loads as you pan.** The first request returns 1000 candles; panning within 15% of
+the left edge fetches the next 1000 older ones and rebuilds, up to a 5000-candle cap
+(~164 MB heap, ~13 ms per rebuild). The view shifts with the prepend so it does not jump.
 
 You will usually see a **gap either side of current price**. That is not missing data — the
 latest candle cleared its own high–low range, so nothing is pending where price just traded.
@@ -94,6 +103,8 @@ src/
     profileCsv.ts   profile → CSV
     classes.ts      ordinal intensity classes + the two colormaps
     price.ts        tick-size → decimals, one price formatter
+    calibrate.ts    scale the active book onto open interest
+    history.ts      merge older pages, cap, backfill trigger
     panelProfile.ts active levels → per-screen-row bars, cumulative, hot pockets
     usd.ts          $12.4K / $3.2M / $1.1B formatting
     alerts.ts       relative band scaling, proximity + cooldown logic
@@ -196,10 +207,9 @@ which build a browser is actually running.
 - Liquidation levels and their USD figures are **inferred** from price, turnover and open
   interest. Exchanges do not publish per-position leverage, so this is a model, not ground
   truth.
-- The USD scale is **flow, not stock**. A candle's turnover is attributed to the levels it
-  implies, summed over the whole window (1000 candles). Cumulative totals therefore run well
-  above current open interest — they measure notional that traded into those levels over
-  months, not positions sitting there now.
+- The USD scale is **anchored to open interest**, not to the raw turnover the engine sums.
+  Without that anchor the totals read as flow (months of notional through a level) rather
+  than stock (what is standing there now), and land an order of magnitude too high.
 - Levels far from price are never swept, so they accumulate into bright shelves near the
   grid edges. That is the model behaving correctly, but it means band strength is judged
   within ±12% of price (`BAND_WINDOW_PCT`) so those shelves do not drown out everything else.

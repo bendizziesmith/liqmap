@@ -57,13 +57,22 @@ async function get<T>(path: string, params: Record<string, string>): Promise<T> 
  * Bybit hands back newest-first tuples of strings; the engine walks forward through time,
  * so the reversal happens here rather than being everyone else's problem.
  */
-export async function fetchKlines(symbol: string, interval: Interval): Promise<Candle[]> {
-  const result = await get<{ list: string[][] }>('/v5/market/kline', {
+export async function fetchKlines(
+  symbol: string,
+  interval: Interval,
+  endMs?: number,
+): Promise<Candle[]> {
+  const params: Record<string, string> = {
     category: 'linear',
     symbol,
     interval: KLINE_INTERVAL[interval],
     limit: '1000',
-  });
+  };
+  // Bybit pages backwards: `end` asks for the 1000 candles finishing at that instant, which
+  // is how history beyond the first request is reached.
+  if (endMs !== undefined) params.end = String(Math.floor(endMs));
+
+  const result = await get<{ list: string[][] }>('/v5/market/kline', params);
 
   const candles = (result.list ?? []).map(
     ([start, open, high, low, close, volume, turnover]): Candle => ({
@@ -128,12 +137,19 @@ export interface Ticker {
   symbol: string;
   price: number;
   changePct: number;
+  /** Notional value of all open positions, in USD. Anchors the displayed USD scale. */
+  openInterestValue: number;
 }
 
 /** Last traded price. Used for the initial paint and as the WebSocket fallback. */
 export async function fetchTicker(symbol: string): Promise<Ticker | null> {
   const result = await get<{
-    list: Array<{ symbol: string; lastPrice: string; price24hPcnt?: string }>;
+    list: Array<{
+      symbol: string;
+      lastPrice: string;
+      price24hPcnt?: string;
+      openInterestValue?: string;
+    }>;
   }>('/v5/market/tickers', { category: 'linear', symbol });
 
   const row = (result.list ?? [])[0];
@@ -143,5 +159,6 @@ export async function fetchTicker(symbol: string): Promise<Ticker | null> {
     symbol: row.symbol,
     price: Number(row.lastPrice),
     changePct: Number(row.price24hPcnt ?? 0) * 100,
+    openInterestValue: Number(row.openInterestValue ?? 0),
   };
 }

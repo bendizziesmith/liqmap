@@ -74,6 +74,19 @@ describe('profileToCsv', () => {
     }
   });
 
+  it('applies the open-interest calibration to every USD column', () => {
+    const plain = profileToCsv(profile(5)).trim().split('\n').slice(1);
+    const scaled = profileToCsv(profile(5), undefined, 0.25).trim().split('\n').slice(1);
+    for (let i = 0; i < plain.length; i++) {
+      const a = plain[i].split(','), b = scaled[i].split(',');
+      // Prices are untouched; the four tier columns and the cumulative are scaled.
+      expect(b[0]).toBe(a[0]);
+      for (const col of [2, 3, 4, 5, 6]) {
+        if (Number(a[col]) > 0) expect(Number(b[col])).toBeCloseTo(Number(a[col]) * 0.25, 4);
+      }
+    }
+  });
+
   it('produces only a header for an empty profile', () => {
     const p = liquidationProfile([], grid, 550, { bins: 0 });
     const lines = profileToCsv({ ...p, bins: [] }).trim().split('\n');

@@ -59,6 +59,19 @@ describe('fetchKlines', () => {
     expect(fetchMock.mock.calls[2][0]).toContain('interval=5');
   });
 
+  it('pages backwards with the end parameter when asked for older history', async () => {
+    fetchMock.mockResolvedValue(ok({ list: [] }));
+    await fetchKlines('BTCUSDT', '4h', 1771617599999);
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('end=1771617599999');
+  });
+
+  it('omits end for the first page', async () => {
+    fetchMock.mockResolvedValue(ok({ list: [] }));
+    await fetchKlines('BTCUSDT', '4h');
+    expect(fetchMock.mock.calls[0][0] as string).not.toContain('end=');
+  });
+
   it('requests the linear category and a full 1000-candle page', async () => {
     fetchMock.mockResolvedValue(ok({ list: [] }));
     await fetchKlines('ETHUSDT', '1h');
@@ -165,12 +178,31 @@ describe('fetchOpenInterest', () => {
 });
 
 describe('fetchTicker', () => {
-  it('extracts the last price', async () => {
+  it('extracts the last price and the open-interest notional', async () => {
     fetchMock.mockResolvedValue(
-      ok({ list: [{ symbol: 'BTCUSDT', lastPrice: '64123.5', price24hPcnt: '0.0123' }] }),
+      ok({
+        list: [
+          {
+            symbol: 'BTCUSDT',
+            lastPrice: '64123.5',
+            price24hPcnt: '0.0123',
+            openInterestValue: '229730518.91',
+          },
+        ],
+      }),
     );
     const t = await fetchTicker('BTCUSDT');
-    expect(t).toEqual({ symbol: 'BTCUSDT', price: 64123.5, changePct: 1.23 });
+    expect(t).toEqual({
+      symbol: 'BTCUSDT',
+      price: 64123.5,
+      changePct: 1.23,
+      openInterestValue: 229730518.91,
+    });
+  });
+
+  it('reports zero open interest when the field is absent, so the scale falls back to 1', () => {
+    fetchMock.mockResolvedValue(ok({ list: [{ symbol: 'BTCUSDT', lastPrice: '1' }] }));
+    return fetchTicker('BTCUSDT').then((t) => expect(t?.openInterestValue).toBe(0));
   });
 
   it('returns null when the symbol is not listed', async () => {

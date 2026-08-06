@@ -4,6 +4,7 @@ import { bucketToPrice, priceToBucket } from '../engine/grid';
 import { normalizeScore } from '../engine/normalize';
 import { COLORMAPS, classAlpha, classBreaks, classOf, type ColormapId } from '../engine/classes';
 import { lastColumn } from '../engine/profile';
+import { needsOlder } from '../engine/history';
 import { buildPanelProfile } from '../engine/panelProfile';
 import { formatUsd, formatUsdPrecise } from '../engine/usd';
 import type { PriceFormatter } from './hooks/usePriceFormat';
@@ -41,6 +42,13 @@ interface Props {
   showProfile: boolean;
   formatPrice: PriceFormatter;
   colormapId: ColormapId;
+  /** Multiplier that denominates displayed USD in open interest. */
+  usdScale: number;
+  /** Changes only when the dataset identity changes, so a backfill does not refit. */
+  resetKey: string;
+  onNeedOlder: () => void;
+  loadingOlder: boolean;
+  prependedCount: number;
 }
 
 type Region = 'plot' | 'priceAxis' | 'timeAxis' | 'panel';
@@ -92,6 +100,11 @@ export function HeatmapCanvas({
   showProfile,
   formatPrice,
   colormapId,
+  usdScale,
+  resetKey,
+  onNeedOlder,
+  loadingOlder,
+  prependedCount,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -101,25 +114,67 @@ export function HeatmapCanvas({
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [cursor, setCursor] = useState('crosshair');
   const [breaksForLegend, setBreaksForLegend] = useState<number[]>([]);
-
-  const combined = useMemo(() => {
-    if (!map) return null;
-    const out = new Float32Array(map.nCols * map.grid.nBuckets);
-    for (let t = 0; t < map.matrices.length; t++) {
-      if (!enabledTiers[t]) continue;
-      const src = map.matrices[t];
-      for (let i = 0; i < out.length; i++) out[i] += src[i];
-    }
-    return out;
-  }, [map, enabledTiers]);
+  const mapRef = useRef(map);
+  mapRef.current = map;
 
   /** Active levels as of the latest candle — the same data the Map view profiles. */
   const active = useMemo(() => (map && map.nCols > 0 ? lastColumn(map) : null), [map]);
 
   useEffect(() => {
-    setView(map && map.nCols > 0 ? fitView(map) : null);
-    // Refit only when a different symbol/interval arrives, not on every live re-seed.
-  }, [map?.grid.min, map?.grid.max, map?.nCols]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Keyed on dataset identity: a live re-seed or a history prepend must not refit.
+    const m = mapRef.current;
+    setView(m && m.nCols > 0 ? fitView(m) : null);
+    viewNCols.current = m?.nCols ?? 0;
+  }, [resetKey]);
+
+  // First paint for a dataset that arrives after the reset key settled.
+  useEffect(() => {
+    if (!view && map && map.nCols > 0) {
+      setView(fitView(map));
+      viewNCols.current = map.nCols;
+    }
+  }, [map, view]);
+
+  /**
+   * Keep the view anchored when older candles are prepended.
+   *
+   * Every column index shifts right by the number added, so without this the chart would
+   * jump backwards in time the moment a backfill landed.
+   */
+  const seenPrepend = useRef(0);
+  /**
+   * Column count the current view was reconciled against.
+   *
+   * `setView` is asynchronous, so on the render where a prepend lands the view still holds
+   * pre-shift indices while the map already has the new columns. Requesting more history
+   * from that intermediate state asks for a page that is already on its way, and a few of
+   * those stacked together allocate the whole matrix set repeatedly.
+   */
+  const viewNCols = useRef(0);
+
+  useEffect(() => {
+    const delta = prependedCount - seenPrepend.current;
+    seenPrepend.current = prependedCount;
+    if (delta <= 0) return;
+    setView((v) => (v ? { ...v, c0: v.c0 + delta, c1: v.c1 + delta } : v));
+    viewNCols.current += delta;
+  }, [prependedCount]);
+
+  /**
+   * Ask for more history once the view approaches the left edge.
+   *
+   * Held off until any previous prepend has been absorbed by the shift above. Without that
+   * guard the render where `nCols` has grown but the view has not yet moved still looks
+   * like "near the left edge", so a second page is requested immediately — and since each
+   * rebuild allocates the whole matrix set, a few of those stacked together are enough to
+   * exhaust the renderer.
+   */
+  useEffect(() => {
+    if (!map || !view || loadingOlder) return;
+    // Only act on a view that matches the map it is describing.
+    if (viewNCols.current !== map.nCols) return;
+    if (needsOlder(view.c0, map.nCols)) onNeedOlder();
+  }, [map, view, loadingOlder, onNeedOlder]);
 
   useEffect(() => {
     const measure = () => {
@@ -184,7 +239,7 @@ export function HeatmapCanvas({
   // ---- paint -------------------------------------------------------------
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !map || !view || !combined || plot.w <= 0 || plot.h <= 0) return;
+    if (!canvas || !map || !view || plot.w <= 0 || plot.h <= 0) return;
 
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.floor(size.w * dpr);
@@ -206,11 +261,21 @@ export function HeatmapCanvas({
 
     // Class breaks from the visible window, so zooming into a quiet region reveals its
     // structure rather than flattening it all into the faintest class.
+    // Summed inline over the visible cells only. A whole-matrix cache would be ~22 MB at
+    // the 5000-candle cap and would be rebuilt on every live tick, for values the paint
+    // never reads.
+    const valueAtCell = (col: number, bucket: number) => {
+      let sum = 0;
+      for (let t = 0; t < map.matrices.length; t++) {
+        if (enabledTiers[t]) sum += map.matrices[t][col * grid.nBuckets + bucket];
+      }
+      return sum;
+    };
+
     const visible: number[] = [];
     for (let c = c0; c < c1; c++) {
-      const off = c * grid.nBuckets;
       for (let b = b0; b <= b1; b++) {
-        const v = combined[off + b];
+        const v = valueAtCell(c, b);
         if (v > 0) visible.push(v);
       }
     }
@@ -233,10 +298,9 @@ export function HeatmapCanvas({
     const img = rctx.createImageData(cols, rows);
     const px = img.data;
     for (let c = c0; c < c1; c++) {
-      const offset = c * grid.nBuckets;
       const cx = c - c0;
       for (let b = b0; b <= b1; b++) {
-        const cls = classOf(combined[offset + b], breaks);
+        const cls = classOf(valueAtCell(c, b), breaks);
         const i = ((b1 - b) * cols + cx) * 4;
         if (cls < 0) {
           px[i + 3] = 0;
@@ -448,7 +512,7 @@ export function HeatmapCanvas({
       ctx.restore();
     }
   }, [
-    map, view, combined, active, panel, enabledTiers, livePrice, size, plot, hover,
+    map, view, active, panel, enabledTiers, livePrice, size, plot, hover,
     interval, showProfile, profileW, profileX, axisX,
   ]);
 
@@ -680,20 +744,20 @@ export function HeatmapCanvas({
                 <i className="tip__swatch" style={{ background: ramp.tierColors[i] }} />
                 {t}×
               </span>
-              <span>{panelRow.tiers[i] > 0 ? formatUsdPrecise(panelRow.tiers[i]) : '—'}</span>
+              <span>{panelRow.tiers[i] > 0 ? formatUsdPrecise(panelRow.tiers[i] * usdScale) : '—'}</span>
             </div>
           ))}
           <div className="tip__row tip__row--total">
             <span>total est.</span>
-            <strong>{panelRow.total > 0 ? formatUsdPrecise(panelRow.total) : '—'}</strong>
+            <strong>{panelRow.total > 0 ? formatUsdPrecise(panelRow.total * usdScale) : '—'}</strong>
           </div>
           <div className="tip__row">
             <span style={{ color: LONG_COLOR }}>cum. longs</span>
-            <span>{panelRow.cumLong > 0 ? formatUsd(panelRow.cumLong) : '—'}</span>
+            <span>{panelRow.cumLong > 0 ? formatUsd(panelRow.cumLong * usdScale) : '—'}</span>
           </div>
           <div className="tip__row">
             <span style={{ color: SHORT_COLOR }}>cum. shorts</span>
-            <span>{panelRow.cumShort > 0 ? formatUsd(panelRow.cumShort) : '—'}</span>
+            <span>{panelRow.cumShort > 0 ? formatUsd(panelRow.cumShort * usdScale) : '—'}</span>
           </div>
           <div className="tip__note">estimated USD, not exchange-reported</div>
         </div>
@@ -717,12 +781,12 @@ export function HeatmapCanvas({
                 <i className="tip__swatch" style={{ background: ramp.tierColors[i] }} />
                 {t}×
               </span>
-              <span>{hover.scores[i] > 0 ? formatUsd(hover.scores[i]) : '—'}</span>
+              <span>{hover.scores[i] > 0 ? formatUsd(hover.scores[i] * usdScale) : '—'}</span>
             </div>
           ))}
           <div className="tip__row tip__row--total">
             <span>total est.</span>
-            <strong>{hoverTotal > 0 ? formatUsdPrecise(hoverTotal) : '—'}</strong>
+            <strong>{hoverTotal > 0 ? formatUsdPrecise(hoverTotal * usdScale) : '—'}</strong>
           </div>
           <div className="tip__note">estimated USD, not exchange-reported</div>
         </div>
@@ -736,11 +800,13 @@ export function HeatmapCanvas({
           {ramp.classColors.map((c, i) => (
             <span className="legend__item" key={i}>
               <i style={{ background: `rgb(${c[0]},${c[1]},${c[2]})`, opacity: classAlpha(i) / 255 }} />
-              {i === 0 ? `< ${formatUsd(breaksForLegend[0])}` : `${formatUsd(breaksForLegend[i - 1])}+`}
+              {i === 0 ? `< ${formatUsd(breaksForLegend[0] * usdScale)}` : `${formatUsd(breaksForLegend[i - 1] * usdScale)}+`}
             </span>
           ))}
         </div>
       )}
+
+      {loadingOlder && <div className="chart__backfill">Loading older candles…</div>}
 
       <button className="chart__refit" onClick={() => map && setView(fitView(map))} type="button">
         Refit

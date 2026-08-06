@@ -21,6 +21,7 @@ function num(v: number): string {
 export function profileToCsv(
   profile: LiquidationProfile,
   formatPrice: (p: number) => string = num,
+  usdScale = 1,
 ): string {
   const lines = [CSV_HEADER];
 
@@ -30,11 +31,11 @@ export function profileToCsv(
 
     const tiers: string[] = [];
     for (let t = 0; t < TIER_COLUMNS; t++) {
-      tiers.push(num(bin.tiers[t] ?? 0));
+      tiers.push(num((bin.tiers[t] ?? 0) * usdScale));
     }
 
     lines.push(
-      [formatPrice(bin.priceFrom), formatPrice(bin.priceTo), ...tiers, num(cumulative)].join(','),
+      [formatPrice(bin.priceFrom), formatPrice(bin.priceTo), ...tiers, num(cumulative * usdScale)].join(','),
     );
   }
 
