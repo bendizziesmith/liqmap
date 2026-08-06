@@ -136,15 +136,26 @@ src/
 
 For each closed candle, oldest first:
 
-1. **Clear** every bucket inside `[low, high]`. Price traded there, so those positions are gone.
-2. **Seed** the levels the candle implies, in USD. Three entry anchors — close `0.45`,
+1. **Decay** every level by its tier's per-candle factor `2^-(candleDays / halfLife)`.
+   Clearing alone treats a level price never revisited as a position someone is still
+   holding, but most positions are closed, stopped or rolled long before they are
+   liquidated — so unswept levels accumulate into ghosts. Half-lives track how long each
+   leverage can realistically be *held*: swing `3x 60d · 5x 30d · 10x 14d · 25x 5d`,
+   scalping `10x 5d · 25x 2d · 50x 1d · 100x 12h`. Decay runs inside the same walk, so a
+   2024 level visibly fades column by column instead of the chart being re-scaled at the
+   end, and values under 1e-6 of the column peak are floored to zero. Toggle in Settings.
+2. **Clear** every bucket inside `[low, high]`. Price traded there, so those positions are gone.
+3. **Seed** the levels the candle implies, in USD. Three entry anchors — close `0.45`,
    high `0.275`, low `0.275` — each carrying
    `turnover × clamp(1 + 8·max(ΔOI/OI, 0), 1, 3)`
    split across four tiers as `[0.35, 0.30, 0.20, 0.15]`, then **halved between the long and
    short side** so a candle's dollars are counted once rather than twice.
    Long liquidation at `entry·(1 − 1/L)`, short at `entry·(1 + 1/L)`.
-   With no clearing, the grid sums to exactly `Σ turnover × oiFactor`.
-3. **Snapshot** the live vector into column `t`.
+   With no clearing or decay, the grid sums to exactly `Σ turnover × oiFactor`.
+4. **Snapshot** the live vector into column `t`.
+
+Decay comes before seeding so a candle's own entries land at full weight — they were opened
+during that candle and have had no time to age.
 
 One `Float32Array` per tier (`nCols × 1100`), so tier toggles never trigger a rebuild.
 
@@ -152,11 +163,28 @@ Rendering quantises intensity into **five ordinal classes** rather than a smooth
 continuous gradient mapped a wide middle band onto near-identical yellows, so large regions
 read as one uniform blob. Class breaks are the p50/p75/p90/p97 percentiles of the non-zero
 values currently on screen, so only ~3% of painted area can be top class, and alpha rises
-per class. Two ramps ship: **Inferno (classes)** by default and a **Classic**
+per class. Breaks are drawn **per side of the book**: one shared ladder ranks every visible
+cell together, and whichever side price sits near occupies a far narrower band of buckets,
+so its levels are denser per bucket and take the top classes while the other side collapses
+into the two faintest. Measured on XRPUSDT 1d, the above-price half held $28.16B against the
+below-price half's $10.75B and still rendered with 3.9% hot cells against 49.2% — the scale
+was hiding 2.6x more mass than it showed. Ranking each side against its own distribution
+costs cross-side comparability, which the tooltip and the side panel still give exactly, and
+buys back the structure of whichever half is quieter. The legend carries a row per side. Two ramps ship: **Inferno (classes)** by default and a **Classic**
 blue→cyan→green→yellow→red where red is heaviest; the choice lives in Settings and drives
 the raster, the side panel and the Map together. A legend labels each class with its est.
 USD floor. The raster is drawn at native bucket resolution and upscaled with smoothing off,
 so buckets stay crisp.
+
+### Time axis
+
+Ticks are generated from the **time domain**, not by stepping column indices. A step is
+chosen from a calendar ladder (minute → year) to suit the zoom, and boundaries align to local
+calendar units, so labels land on real dates: year starts read `2026`, month starts `Mar`,
+and day numbers or `HH:mm` in between. Labels are a pure function of the tick's own date —
+never of its neighbours — which is what keeps a tick glued to its date while the chart pans
+and through a history prepend that shifts every column index underneath it. Index-modulo
+stepping, which this replaces, landed on arbitrary dates and could print the same label twice.
 
 ### Price precision
 

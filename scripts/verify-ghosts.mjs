@@ -16,24 +16,51 @@ const BASE = process.argv[2] ?? 'https://liqmap.netlify.app/';
 const SYMBOL = process.argv[3] ?? 'XRPUSDT';
 const INTERVAL = process.argv[4] ?? '1d';
 
-/** Drag the price axis downward three times; each drag zooms that axis out about its centre. */
-async function zoomPriceOut() {
+/**
+ * Zoom and pan the price axis until the whole grid is on screen.
+ *
+ * Driven by the view domain the chart publishes rather than by guessed drag distances: a
+ * fixed number of drags either undershoots and misses the ghosts or overshoots into a +-39
+ * price range where every level collapses onto one line.
+ */
+async function frameWholeGrid(target) {
   const cv = document.querySelector('.chart__canvas');
-  const r = cv.getBoundingClientRect();
-  const x = r.right - 30; // inside the price gutter
-  const ev = (t, y) =>
-    cv.dispatchEvent(new PointerEvent(t, { pointerId: 77, clientX: x, clientY: y, bubbles: true, isPrimary: true }));
-  for (let pass = 0; pass < 3; pass++) {
-    const from = r.top + r.height * 0.25;
-    const to = r.top + r.height * 0.95;
-    ev('pointerdown', from);
-    for (let s = 1; s <= 12; s++) {
-      ev('pointermove', from + ((to - from) * s) / 12);
-      await new Promise((z) => setTimeout(z, 35));
+  const domain = () => (cv.getAttribute('data-view') ?? '').split(',').map(Number);
+  const drag = async (x, y0, y1, id) => {
+    const ev = (t, y) =>
+      cv.dispatchEvent(new PointerEvent(t, { pointerId: id, clientX: x, clientY: y, bubbles: true, isPrimary: true }));
+    ev('pointerdown', y0);
+    for (let s = 1; s <= 10; s++) {
+      ev('pointermove', y0 + ((y1 - y0) * s) / 10);
+      await new Promise((z) => setTimeout(z, 30));
     }
-    ev('pointerup', to);
-    await new Promise((z) => setTimeout(z, 250));
+    ev('pointerup', y1);
+    await new Promise((z) => setTimeout(z, 300));
+  };
+
+  for (let i = 0; i < 12; i++) {
+    const r = cv.getBoundingClientRect();
+    const [p0, p1] = domain();
+    if (!Number.isFinite(p0)) break;
+    if (p0 <= target.lo && p1 >= target.hi) break;
+
+    const span = p1 - p0;
+    const want = (target.hi - target.lo) * 1.08;
+    if (span < want) {
+      // Zoom the price axis out: dragging it down scales the domain by e^(px/400).
+      const px = Math.min(r.height * 0.7, 400 * Math.log(want / span));
+      const mid = r.top + r.height * 0.2;
+      await drag(r.right - 30, mid, mid + px, 77);
+    } else {
+      // Right span, wrong centre — pan the plot so the far-above band comes into view.
+      const wantMid = (target.lo + target.hi) / 2;
+      const gotMid = (p0 + p1) / 2;
+      const px = ((wantMid - gotMid) / span) * r.height;
+      const mid = r.top + r.height * 0.5;
+      await drag(r.left + r.width * 0.4, mid, Math.max(r.top + 5, Math.min(r.bottom - 5, mid + px)), 78);
+    }
   }
+  return domain();
 }
 
 /** Painted heat pixels above the live-price line, and within the far-above band. */
@@ -67,20 +94,34 @@ function samplePixels() {
     return -1;
   };
 
-  let painted = 0, cells = 0, paintedFar = 0, cellsFar = 0;
-  // Once zoomed right out the top third of the above-price half is where the ~4x ghosts sit.
-  const farBand = priceY / 3;
+  // Map the far-above band (2x price and up) to pixels using the published domain.
+  const [p0, p1] = (cv.getAttribute('data-view') ?? '').split(',').map(Number);
+  const yOf = (price) => ((p1 - price) / (p1 - p0)) * plotH;
+  const price = p0 + (1 - priceY / plotH) * (p1 - p0);
+  const farBand = yOf(price * 2);
+
+  /*
+   * Counting merely-painted pixels does not measure this. Classes come from percentiles of
+   * whatever is on screen, so they are scale-invariant: a ghost decayed to a thousandth of
+   * its old value is still non-zero and still gets painted, just in the faintest class. What
+   * decay changes is which levels are strong enough to take the TOP classes, so that is what
+   * is counted here — separately for the far-above band and for the band around price.
+   */
+  let painted = 0, cells = 0, hotFar = 0, cellsFar = 0, hotNear = 0, cellsNear = 0;
+  const nearTop = yOf(price * 1.15);
   for (let y = 0; y < priceY - 3; y++) {
     for (let x = 0; x < plotW; x++) {
       const k = cls(d[(y * W + x) * 4], d[(y * W + x) * 4 + 1], d[(y * W + x) * 4 + 2]);
       cells++;
       if (y < farBand) cellsFar++;
+      if (y >= nearTop) cellsNear++;
       if (k < 0) continue;
       painted++;
-      if (y < farBand) paintedFar++;
+      if (k >= 3 && y < farBand) hotFar++;
+      if (k >= 3 && y >= nearTop) hotNear++;
     }
   }
-  return { priceY, painted, cells, paintedFar, cellsFar };
+  return { priceY, painted, cells, hotFar, cellsFar, hotNear, cellsNear, p0, p1, price };
 }
 
 async function run(decay) {
@@ -111,8 +152,9 @@ async function run(decay) {
   );
   await new Promise((r) => setTimeout(r, 4000));
 
-  await page.evaluate(zoomPriceOut);
-  await new Promise((r) => setTimeout(r, 1500));
+  const domain = await page.evaluate(frameWholeGrid, { lo: 0.2, hi: 4.4 });
+  await new Promise((r) => setTimeout(r, 1200));
+  console.log(`  decay ${decay ? 'on ' : 'off'}: framed price range [${domain[0]?.toFixed(2)}, ${domain[1]?.toFixed(2)}]`);
 
   const s = await page.evaluate(samplePixels);
   await page.screenshot({
@@ -131,7 +173,10 @@ console.log(`\n${SYMBOL} ${INTERVAL} — price axis zoomed fully out, at ${BASE}
 console.log('='.repeat(72));
 console.log('                                      DECAY OFF      DECAY ON');
 console.log(`  painted above price          ${pct(off.painted / off.cells).padStart(14)}${pct(on.painted / on.cells).padStart(14)}`);
-console.log(`  painted in the far-above band${pct(off.paintedFar / off.cellsFar).padStart(14)}${pct(on.paintedFar / on.cellsFar).padStart(14)}`);
-console.log(`  far-band pixels                 ${String(off.paintedFar).padStart(11)}${String(on.paintedFar).padStart(14)}`);
-console.log(`\n  ghost shelf reduction: ${(off.paintedFar / Math.max(1, on.paintedFar)).toFixed(1)}x fewer painted pixels far above price`);
+console.log(`  TOP-CLASS above 2x price     ${pct(off.hotFar / off.cellsFar).padStart(14)}${pct(on.hotFar / on.cellsFar).padStart(14)}`);
+console.log(`  top-class pixels above 2x       ${String(off.hotFar).padStart(11)}${String(on.hotFar).padStart(14)}`);
+console.log(`  TOP-CLASS within 15% of price${pct(off.hotNear / off.cellsNear).padStart(14)}${pct(on.hotNear / on.cellsNear).padStart(14)}`);
+console.log(`  top-class pixels near price     ${String(off.hotNear).padStart(11)}${String(on.hotNear).padStart(14)}`);
+console.log(`\n  ghost shelf:  ${off.hotFar} -> ${on.hotFar} top-class pixels above 2x price`);
+console.log(`  near price:   ${off.hotNear} -> ${on.hotNear} top-class pixels within 15% of price`);
 console.log(`  screenshots: docs/screenshots/decay-{off,on}-${SYMBOL.toLowerCase()}-${INTERVAL}.png`);

@@ -184,18 +184,32 @@ const candleCount = async () =>
   Number(/(\d+)\s+candles/.exec(await page.evaluate(() => document.querySelector('.status')?.textContent ?? ''))?.[1] ?? 0);
 
 const beforeN = await candleCount();
-await page.evaluate(async () => {
-  const cv = document.querySelector('.chart__canvas');
-  const r = cv.getBoundingClientRect();
-  const y = r.top + r.height * 0.4;
-  const from = r.left + r.width * 0.15;
-  const to = r.left + r.width * 0.95;
-  const ev = (t, x) => cv.dispatchEvent(new PointerEvent(t, { pointerId: 32, clientX: x, clientY: y, bubbles: true, isPrimary: true }));
-  ev('pointerdown', from);
-  for (let s = 1; s <= 12; s++) { ev('pointermove', from + ((to - from) * s) / 12); await new Promise((r2) => setTimeout(r2, 40)); }
-  ev('pointerup', to);
-});
-await new Promise((r) => setTimeout(r, 400));
+const leftCol = () =>
+  page.evaluate(() => Number((document.querySelector('.chart__canvas')?.getAttribute('data-view') ?? '').split(',')[2]));
+
+const panLeft = () =>
+  page.evaluate(async () => {
+    const cv = document.querySelector('.chart__canvas');
+    const r = cv.getBoundingClientRect();
+    const y = r.top + r.height * 0.4;
+    const from = r.left + r.width * 0.15;
+    const to = r.left + r.width * 0.95;
+    const ev = (t, x) => cv.dispatchEvent(new PointerEvent(t, { pointerId: 32, clientX: x, clientY: y, bubbles: true, isPrimary: true }));
+    ev('pointerdown', from);
+    for (let s = 1; s <= 12; s++) { ev('pointermove', from + ((to - from) * s) / 12); await new Promise((r2) => setTimeout(r2, 40)); }
+    ev('pointerup', to);
+  });
+
+// Walk left until the view is close enough to column 0 for the backfill to arm, then stop
+// panning. The comparison has to straddle the prepend alone — panning as well would move the
+// dates for a reason that has nothing to do with the columns shifting underneath them.
+for (let k = 0; k < 12; k++) {
+  if ((await leftCol()) < 60) break;
+  if ((await candleCount()) !== beforeN) break;
+  await panLeft();
+  await new Promise((r) => setTimeout(r, 500));
+}
+await new Promise((r) => setTimeout(r, 200));
 
 const preTicks = await ticks();
 let afterN = beforeN;
