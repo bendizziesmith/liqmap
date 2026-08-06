@@ -1021,3 +1021,9 @@ body {
     display: none;
   }
 }
+
+/* The Map panel header holds both reset and export. */
+.panel__actions {
+  display: flex;
+  gap: 6px;
+}

@@ -8,7 +8,7 @@ import { buildPanelProfile } from '../engine/panelProfile';
 import { formatUsd, formatUsdPrecise } from '../engine/usd';
 import type { PriceFormatter } from './hooks/usePriceFormat';
 import { priceToY, yToPrice } from './scale';
-import { axisZoomFactor, scaleAbout } from './axis';
+import { axisZoomFactor, scaleAbout, wheelZoomFactor } from './axis';
 import { capturePointer, releasePointer } from './gesture';
 
 const AXIS_W = 62; // right-hand price gutter
@@ -464,7 +464,9 @@ export function HeatmapCanvas({
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
       const region = regionAt(mx, my);
-      const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15;
+      // Proportional to the actual wheel movement: a flat step made trackpads compound
+      // into a runaway zoom-out.
+      const factor = wheelZoomFactor(e.deltaY, e.deltaMode);
 
       setView((v) => {
         if (!v) return v;

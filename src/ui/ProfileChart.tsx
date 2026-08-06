@@ -3,16 +3,16 @@ import type { LiquidationProfile, ProfileBin } from '../engine/profile';
 import { COLORMAPS, type ColormapId } from '../engine/classes';
 import { formatUsd, formatUsdPrecise } from '../engine/usd';
 import type { PriceFormatter } from './hooks/usePriceFormat';
+import { capturePointer, releasePointer } from './gesture';
 import {
-  capturePointer,
-  pinchAnchor,
-  pinchFactor,
-  releasePointer,
-  spreadX,
-  zoomDomain,
-  type Point,
-} from './gesture';
-import { axisZoomFactor } from './axis';
+  BRUSH_HANDLE_PX,
+  brushPixelRange,
+  brushZoneAt,
+  resizeBrush,
+  slideBrush,
+  xToBin,
+  type BrushZone,
+} from './brush';
 
 const AXIS_H = 20; // price labels under the plot
 const AXIS_W = 46; // cumulative labels on the right
@@ -56,9 +56,10 @@ export function ProfileChart({
   const [hover, setHover] = useState<Hover | null>(null);
   /** Visible slice of the bin array: [i0, i1). Zoom and pan act on the price axis. */
   const [range, setRange] = useState<[number, number] | null>(null);
-  const dragRef = useRef<{ x: number; range: [number, number]; axis: boolean } | null>(null);
-  const pointers = useRef(new Map<number, Point>());
-  const pinchRef = useRef<{ spread: number; range: [number, number] } | null>(null);
+  const [cursor, setCursor] = useState('crosshair');
+  // 'outside' never reaches here: pointerdown returns early on it.
+  type ActiveZone = Exclude<BrushZone, 'outside'>;
+  const brushRef = useRef<{ zone: ActiveZone; x: number; range: [number, number] } | null>(null);
 
   const nBins = profile?.bins.length ?? 0;
 
@@ -102,6 +103,9 @@ export function ProfileChart({
     }),
     [size],
   );
+
+  /** Top edge of the brush strip — the only interactive region on this chart. */
+  const brushTop = useMemo(() => plot.h + AXIS_H + BRUSH_GAP, [plot.h]);
 
   /** Peak bar height and cumulative within the visible slice, so zooming reveals detail. */
   const visibleMax = useMemo(() => {
@@ -280,14 +284,24 @@ export function ProfileChart({
       ctx.fillRect(x, by + BRUSH_H - h, Math.max(1, plot.w / nBins), h);
     }
 
-    const bx0 = (i0 / nBins) * plot.w;
-    const bx1 = (i1 / nBins) * plot.w;
-    ctx.fillStyle = 'rgba(7,7,11,0.55)';
+    const [bx0, bx1] = brushPixelRange([i0, i1], nBins, plot.w);
+    ctx.fillStyle = 'rgba(7,7,11,0.6)';
     ctx.fillRect(0, by, bx0, BRUSH_H);
     ctx.fillRect(bx1, by, plot.w - bx1, BRUSH_H);
     ctx.strokeStyle = 'rgba(245,158,11,0.9)';
     ctx.lineWidth = 1;
     ctx.strokeRect(bx0 + 0.5, by + 0.5, Math.max(2, bx1 - bx0 - 1), BRUSH_H - 1);
+
+    // Grab handles: the strip is the only zoom control, so its affordances must be visible.
+    ctx.fillStyle = '#f59e0b';
+    for (const hx of [bx0, bx1]) {
+      ctx.fillRect(hx - BRUSH_HANDLE_PX / 2, by, BRUSH_HANDLE_PX, BRUSH_H);
+      ctx.fillStyle = 'rgba(7,7,11,0.85)';
+      for (const gx of [-2, 1]) {
+        ctx.fillRect(hx + gx, by + 6, 1, BRUSH_H - 12);
+      }
+      ctx.fillStyle = '#f59e0b';
+    }
 
     // ---- crosshair ----
     if (hover) {
@@ -302,43 +316,29 @@ export function ProfileChart({
     }
   }, [profile, range, plot, size, visibleMax, hover, nBins, formatPrice, ramp]);
 
-  const onWheel = useCallback(
-    (e: React.WheelEvent) => {
+  /**
+   * All range control lives on the brush.
+   *
+   * The plot itself has no wheel, drag or pinch handler: scrolling over the Map must scroll
+   * the page like ordinary content, and a page you cannot scroll because a chart swallowed
+   * the gesture is worse than one you have to aim at a strip to zoom.
+   */
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent) => {
       if (!range || nBins === 0) return;
       const rect = canvasRef.current!.getBoundingClientRect();
       const mx = e.clientX - rect.left;
-      const factor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
+      const my = e.clientY - rect.top;
+      if (my < brushTop || my > brushTop + BRUSH_H) return;
 
-      setRange((prev) =>
-        prev
-          ? zoomDomain(prev, factor, mx / Math.max(1, plot.w), [0, nBins], MIN_BINS)
-          : prev,
-      );
-    },
-    [range, nBins, plot.w],
-  );
+      const zone = brushZoneAt(mx, range, nBins, plot.w);
+      if (zone === 'outside') return;
 
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent) => {
-      if (!range) return;
-      const rect = canvasRef.current!.getBoundingClientRect();
       capturePointer(canvasRef.current, e.pointerId);
-      pointers.current.set(e.pointerId, { x: e.clientX - rect.left, y: e.clientY - rect.top });
-
-      if (pointers.current.size === 2) {
-        const [a, b] = [...pointers.current.values()];
-        pinchRef.current = { spread: spreadX(a, b), range };
-        dragRef.current = null;
-      } else {
-        // Below the plot is the price axis: dragging it zooms rather than pans, matching
-        // the heatmap and TradingView.
-        const onAxis = e.clientY - rect.top > plot.h;
-        dragRef.current = { x: e.clientX, range, axis: onAxis };
-      }
+      brushRef.current = { zone, x: e.clientX, range };
+      setHover(null);
     },
-    // plot.h decides the axis region, so a stale copy would misclassify the drag after a
-    // resize — every pointerdown below the plot would read as a pan.
-    [range, plot.h],
+    [range, nBins, plot.w, brushTop],
   );
 
   const onPointerMove = useCallback(
@@ -349,61 +349,25 @@ export function ProfileChart({
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
 
-      if (pointers.current.has(e.pointerId)) {
-        pointers.current.set(e.pointerId, { x: mx, y: my });
-      }
-
-      // Two fingers pinch the price axis, matching the heatmap's touch gestures.
-      if (pointers.current.size === 2 && pinchRef.current) {
-        const [a, b] = [...pointers.current.values()];
-        const start = pinchRef.current;
-        setRange(
-          zoomDomain(
-            start.range,
-            pinchFactor(start.spread, spreadX(a, b)),
-            pinchAnchor(a, b, plot.w),
-            [0, nBins],
-            MIN_BINS,
-          ),
-        );
-        setHover(null);
-        return;
-      }
-
-      if (dragRef.current?.axis) {
-        const d = dragRef.current;
-        setRange(
-          zoomDomain(
-            d.range,
-            axisZoomFactor(d.x - e.clientX),
-            0.5,
-            [0, nBins],
-            MIN_BINS,
-          ),
-        );
-        setHover(null);
-        return;
-      }
-
-      if (dragRef.current) {
-        const d = dragRef.current;
-        const [s0, s1] = d.range;
-        const perPx = (s1 - s0) / Math.max(1, plot.w);
-        const shift = Math.round((e.clientX - d.x) * perPx);
-        let n0 = s0 - shift;
-        let n1 = s1 - shift;
-        if (n0 < 0) {
-          n1 -= n0;
-          n0 = 0;
+      const drag = brushRef.current;
+      if (drag) {
+        if (drag.zone === 'inside') {
+          const perPx = nBins / Math.max(1, plot.w);
+          setRange(slideBrush(drag.range, (e.clientX - drag.x) * perPx, nBins));
+        } else {
+          setRange(resizeBrush(drag.range, drag.zone, xToBin(mx, plot.w, nBins), nBins, MIN_BINS));
         }
-        if (n1 > nBins) {
-          n0 -= n1 - nBins;
-          n1 = nBins;
-        }
-        setRange([Math.max(0, n0), Math.min(nBins, n1)]);
+        return;
+      }
+
+      // Cursor feedback over the strip, so the handles advertise themselves.
+      if (my >= brushTop && my <= brushTop + BRUSH_H) {
+        const zone = brushZoneAt(mx, range, nBins, plot.w);
+        setCursor(zone === 'left' || zone === 'right' ? 'ew-resize' : zone === 'inside' ? 'grab' : 'default');
         setHover(null);
         return;
       }
+      setCursor('crosshair');
 
       if (mx < 0 || mx > plot.w || my < 0 || my > plot.h) {
         setHover(null);
@@ -418,23 +382,26 @@ export function ProfileChart({
       }
       setHover({ x: mx, y: my, bin, index: idx });
     },
-    [profile, range, plot, nBins],
+    [profile, range, plot, nBins, brushTop],
   );
 
   const endPointer = useCallback((e: React.PointerEvent) => {
     releasePointer(canvasRef.current, e.pointerId);
-    pointers.current.delete(e.pointerId);
-    if (pointers.current.size < 2) pinchRef.current = null;
-    if (pointers.current.size === 0) dragRef.current = null;
+    brushRef.current = null;
   }, []);
 
-  useEffect(() => {
-    const el = canvasRef.current;
-    if (!el) return;
-    const handler = (e: Event) => e.preventDefault();
-    el.addEventListener('wheel', handler, { passive: false });
-    return () => el.removeEventListener('wheel', handler);
-  }, []);
+  const resetRange = useCallback(() => {
+    if (nBins > 0) setRange([0, nBins]);
+  }, [nBins]);
+
+  const onDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      const rect = canvasRef.current!.getBoundingClientRect();
+      const my = e.clientY - rect.top;
+      if (my >= brushTop && my <= brushTop + BRUSH_H) resetRange();
+    },
+    [brushTop, resetRange],
+  );
 
   const hoverSide =
     hover && profile
@@ -452,27 +419,38 @@ export function ProfileChart({
           <h2 className="panel__title">{title}</h2>
           <p className="panel__sub">{subtitle}</p>
         </div>
-        <button
-          type="button"
-          className="btn btn--ghost"
-          onClick={onExport}
-          disabled={!profile}
-        >
-          Export CSV
-        </button>
+        <div className="panel__actions">
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={resetRange}
+            disabled={!profile}
+            title="Reset the brush to the full price range"
+          >
+            Reset zoom
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={onExport}
+            disabled={!profile}
+          >
+            Export CSV
+          </button>
+        </div>
       </header>
 
       <div className="panel__body" ref={wrapRef}>
         <canvas
           ref={canvasRef}
           className="panel__canvas"
-          style={{ width: size.w, height: size.h }}
-          onWheel={onWheel}
+          style={{ width: size.w, height: size.h, cursor, touchAction: 'pan-y' }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={endPointer}
           onPointerCancel={endPointer}
           onPointerLeave={() => setHover(null)}
+          onDoubleClick={onDoubleClick}
         />
 
         {loading && <div className="panel__empty">Loading…</div>}
