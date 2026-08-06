@@ -150,8 +150,11 @@ For each closed candle, oldest first:
    `turnover × clamp(1 + 8·max(ΔOI/OI, 0), 1, 3)`
    split across four tiers as `[0.35, 0.30, 0.20, 0.15]`, then **halved between the long and
    short side** so a candle's dollars are counted once rather than twice.
-   Long liquidation at `entry·(1 − 1/L)`, short at `entry·(1 + 1/L)`.
-   With no clearing or decay, the grid sums to exactly `Σ turnover × oiFactor`.
+   Long liquidation at `entry·(1 − 1/L)`, short at `entry·(1 + 1/L)`, each level spread
+   over a small triangular kernel (`0.25/0.5/0.25` across three buckets — an entry is not
+   at one exact tick, and a one-bucket needle claims precision the model does not have).
+   Edge shares fold back in, so with no clearing or decay the grid still sums to exactly
+   `Σ turnover × oiFactor`.
 4. **Snapshot** the live vector into column `t`.
 
 Decay comes before seeding so a candle's own entries land at full weight — they were opened
@@ -173,8 +176,18 @@ costs cross-side comparability, which the tooltip and the side panel still give 
 buys back the structure of whichever half is quieter. The legend carries a row per side. Two ramps ship: **Inferno (classes)** by default and a **Classic**
 blue→cyan→green→yellow→red where red is heaviest; the choice lives in Settings and drives
 the raster, the side panel and the Map together. A legend labels each class with its est.
-USD floor. The raster is drawn at native bucket resolution and upscaled with smoothing off,
-so buckets stay crisp.
+USD floor, and notes that the faintest quarter of class 0 is hidden entirely — a noise
+floor that keeps the ground clean dark instead of dim speckle.
+
+The raster is drawn at **display-row** resolution, not bucket resolution: when the visible
+bucket span exceeds what the plot can show at ≥3px per row, each row takes the *sum* of the
+buckets it owns (mass conserved, so the class ladder stays honest), and zooming in returns
+naturally to one bucket per row. Before this, one source pixel per bucket meant the blit's
+nearest-neighbour sampling silently discarded every bucket that didn't land on an output
+row — levels flickered with zoom and the chart read as 1px static. The side panel is built
+on the same row grid, so bars are exactly as tall as the bands they describe. A "Smooth
+rendering" toggle (default on) softens band edges on the upscale; off keeps crisp blocks.
+Display only — tooltips read the raw buckets either way.
 
 ### Time axis
 
