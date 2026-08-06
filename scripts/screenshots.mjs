@@ -28,6 +28,16 @@ const SHOTS = [
   // Social card: the real product at the 1.91:1 ratio scrapers expect. Written into
   // public/ so the build copies it to the site root.
   {
+    name: 'classes-xrp.png',
+    ...DESKTOP,
+    view: { symbol: 'XRPUSDT', interval: '1h', tab: 'heatmap', showProfile: true, colormap: 'inferno' },
+  },
+  {
+    name: 'classes-classic.png',
+    ...DESKTOP,
+    view: { symbol: 'XRPUSDT', interval: '1h', tab: 'heatmap', showProfile: true, colormap: 'classic' },
+  },
+  {
     name: 'og.png',
     width: 1200,
     height: 630,
@@ -43,6 +53,7 @@ const BASE_VIEW = {
   enabledTiers: [true, true, true, true],
   tab: 'heatmap',
   showProfile: true,
+  colormap: 'inferno',
 };
 
 mkdirSync(OUT, { recursive: true });

@@ -92,6 +92,8 @@ src/
     bands.ts        column → ranked price levels
     profile.ts      last column → binned, tier-stacked profile + cumulative curves
     profileCsv.ts   profile → CSV
+    classes.ts      ordinal intensity classes + the two colormaps
+    price.ts        tick-size → decimals, one price formatter
     panelProfile.ts active levels → per-screen-row bars, cumulative, hot pockets
     usd.ts          $12.4K / $3.2M / $1.1B formatting
     alerts.ts       relative band scaling, proximity + cooldown logic
@@ -100,6 +102,7 @@ src/
     rest.ts         kline, open interest (cursor paginated), tickers
     ws.ts           public linear socket, 20s ping, backoff reconnect
     cache.ts        TTL memo shared by the watchlist
+    instruments.ts  per-symbol tick size, cached for the session
   ui/         React
     scale.ts        the one price↔Y transform, shared by chart and side panel
     axis.ts         axis drag-to-zoom maths
@@ -126,9 +129,23 @@ For each closed candle, oldest first:
 
 One `Float32Array` per tier (`nCols × 1100`), so tier toggles never trigger a rebuild.
 
-Rendering uses inferno with `x = (score/vmax)^0.68`, `vmax` = the 99.7th percentile of the
-**non-zero** values currently on screen, and `alpha = 35 + 220·min(1, 1.25x)`. The raster is
-drawn at native bucket resolution and upscaled with smoothing off, so buckets stay crisp.
+Rendering quantises intensity into **five ordinal classes** rather than a smooth ramp — a
+continuous gradient mapped a wide middle band onto near-identical yellows, so large regions
+read as one uniform blob. Class breaks are the p50/p75/p90/p97 percentiles of the non-zero
+values currently on screen, so only ~3% of painted area can be top class, and alpha rises
+per class. Two ramps ship: **Inferno (classes)** by default and a **Classic**
+blue→cyan→green→yellow→red where red is heaviest; the choice lives in Settings and drives
+the raster, the side panel and the Map together. A legend labels each class with its est.
+USD floor. The raster is drawn at native bucket resolution and upscaled with smoothing off,
+so buckets stay crisp.
+
+### Price precision
+
+Decimals come from the instrument's own `priceFilter.tickSize`, fetched once per symbol and
+cached — BTC 1 dp, ETH 2, XRP and ADA 4, DOGE 5. One `formatPrice` feeds the axis, the live
+tag, the watchlist, all three tooltips, the Map axis, the tape, alerts and CSV, so a symbol
+renders at one precision everywhere. Formatting by magnitude, which this replaces, flipped
+XRP between `1.050` and `0.9716` across the dollar line.
 
 ### Why Bybit only
 
@@ -142,7 +159,7 @@ perpetuals; the custom input accepts any of them.
 npm test
 ```
 
-277 tests, none of which touch the network — `fetch` and `WebSocket` are stubbed. The engine
+321 tests, none of which touch the network — `fetch` and `WebSocket` are stubbed. The engine
 is pure, so it is tested directly against synthetic candles. The load-bearing cases are the
 clearing invariant (a level seeded at candle 0 survives to candle 2 and is exactly zero at
 the candle whose range covers it), USD conservation, and cumulative monotonicity outward
