@@ -112,17 +112,15 @@ for (const shot of shots) {
       for (const cv of document.querySelectorAll('.panel__canvas')) {
         const dpr = window.devicePixelRatio || 1;
         const plotH = cv.height / dpr - AXIS_H - BRUSH_H - BRUSH_GAP;
+        const plotW = cv.width / dpr - 46;
         const brushTop = plotH + AXIS_H + BRUSH_GAP;
         const rect = cv.getBoundingClientRect();
-        const y = Math.round((brushTop + BRUSH_H / 2) * dpr);
-        const row = cv.getContext('2d').getImageData(0, y, cv.width, 1).data;
-        const xs = [];
-        for (let x = 0; x < cv.width; x++) {
-          const i = x * 4;
-          if (row[i] > 230 && row[i + 1] > 140 && row[i + 1] < 190 && row[i + 2] < 60) xs.push(x / dpr);
-        }
-        if (!xs.length) continue;
-        const [x0, x1] = [Math.min(...xs), Math.max(...xs)];
+        // Read the window the component publishes rather than sniffing handle pixels.
+        const raw = cv.getAttribute('data-brush');
+        if (!raw) continue;
+        const [b0, b1] = raw.split(',').map(Number);
+        const xOfBin = (i) => (i / 200) * plotW;
+        const [x0, x1] = [xOfBin(b0), xOfBin(b1)];
         const by = rect.top + brushTop + BRUSH_H / 2;
         const from = rect.left + x1;
         const to = rect.left + x0 + (x1 - x0) * 0.45;

@@ -36,11 +36,19 @@ those positions are already liquidated. That vertical edge is the moment the lev
 swept, and it is the single most informative thing on the chart.
 
 Figures are **estimated USD notional**, labelled "est." throughout, and **calibrated to open
-interest**: liquidations can only come from positions that are currently open, so the active
-unswept book is scaled to total the symbol's reported `openInterestValue`. Raw engine values
-are cumulative turnover over the whole window, which reaches billions — an order of magnitude
-more than could ever actually liquidate. The scale is one display multiplier; no engine value
-or rendering normalisation changes.
+interest**. Liquidations can only come from positions that are currently open, so the active
+unswept book is scaled to total the symbol's reported `openInterestValue` — raw engine values
+are cumulative turnover over the whole window and reach billions, far more than could ever
+liquidate.
+
+**Each side is anchored separately.** Open interest counts contracts, and every contract has
+a long holder and a short holder, so $227M of OI means $227M of longs standing *and* $227M of
+shorts. Scaling both sides against a single OI figure undercounts each by about two. Fully
+zoomed out, cumulative longs and cumulative shorts each converge on OI.
+
+Cumulative figures sum over the **whole loaded book** outward from current price, so zooming
+changes what you can see but never what the tooltip reports at a given price. These are
+display multipliers only; no engine value or rendering normalisation changes.
 
 ## Liquidation Map
 
