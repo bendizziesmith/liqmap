@@ -63,6 +63,17 @@ describe('profileToCsv', () => {
     }
   });
 
+  it('formats prices with the supplied per-symbol formatter', () => {
+    // The CSV must carry the same precision the chart shows, and stay parseable.
+    const rows = profileToCsv(profile(3), (p) => p.toFixed(4)).trim().split('\n').slice(1);
+    for (const line of rows) {
+      const [from, to] = line.split(',');
+      expect(from.split('.')[1]).toHaveLength(4);
+      expect(to.split('.')[1]).toHaveLength(4);
+      expect(Number.isFinite(Number(from))).toBe(true);
+    }
+  });
+
   it('produces only a header for an empty profile', () => {
     const p = liquidationProfile([], grid, 550, { bins: 0 });
     const lines = profileToCsv({ ...p, bins: [] }).trim().split('\n');

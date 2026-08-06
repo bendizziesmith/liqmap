@@ -18,7 +18,10 @@ function num(v: number): string {
  * long total below current price, the short total above. They are separate quantities, so
  * a row only ever has one of them.
  */
-export function profileToCsv(profile: LiquidationProfile): string {
+export function profileToCsv(
+  profile: LiquidationProfile,
+  formatPrice: (p: number) => string = num,
+): string {
   const lines = [CSV_HEADER];
 
   for (let i = 0; i < profile.bins.length; i++) {
@@ -31,7 +34,7 @@ export function profileToCsv(profile: LiquidationProfile): string {
     }
 
     lines.push(
-      [num(bin.priceFrom), num(bin.priceTo), ...tiers, num(cumulative)].join(','),
+      [formatPrice(bin.priceFrom), formatPrice(bin.priceTo), ...tiers, num(cumulative)].join(','),
     );
   }
 

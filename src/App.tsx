@@ -17,6 +17,8 @@ import { KLINE_INTERVAL } from './data/rest';
 import { useWatchlist } from './ui/hooks/useWatchlist';
 import { useAlerts } from './ui/hooks/useAlerts';
 import { useMedia } from './ui/hooks/useMedia';
+import { usePriceFormats } from './ui/hooks/usePriceFormat';
+import type { ColormapId } from './engine/classes';
 
 export default function App() {
   const [view, patchView] = usePersisted('liqmap.view', DEFAULT_VIEW);
@@ -25,7 +27,9 @@ export default function App() {
   const [closedNonce, setClosedNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  const { symbol, interval, enabledTiers, tab, showProfile } = view;
+  const { symbol, interval, enabledTiers, tab, showProfile, colormap } = view;
+
+
   const tiers = useMemo(() => tiersForMode(modeForInterval(interval)), [interval]);
 
   // 90px of profile is not affordable on a phone, so it collapses regardless of preference.
@@ -39,6 +43,11 @@ export default function App() {
     () => (PRESET_SYMBOLS.includes(symbol) ? PRESET_SYMBOLS : [...PRESET_SYMBOLS, symbol]),
     [symbol],
   );
+
+  // One lookup for every symbol on screen: the watchlist needs each instrument's own
+  // precision, not the focused symbol's.
+  const formatFor = usePriceFormats(symbols);
+  const formatPrice = formatFor(symbol);
 
   const { prices, status, tape, formingCandle, candleClosed } = useLive(
     symbols,
@@ -65,7 +74,7 @@ export default function App() {
     return scaleBandsTo100(bandsWithin(raw, last, BAND_WINDOW_PCT));
   }, [map, enabledTiers, livePrice]);
 
-  const alerts = useAlerts(symbol, livePrice, focusBands, settings);
+  const alerts = useAlerts(symbol, livePrice, focusBands, settings, formatPrice);
 
   const onToggleTier = useCallback(
     (i: number) => {
@@ -103,6 +112,7 @@ export default function App() {
         bands={watchBands}
         minScore={settings.alertMinScore}
         onSelect={(s) => patchView({ symbol: s })}
+        formatFor={formatFor}
       />
 
       <main className="main">
@@ -113,9 +123,17 @@ export default function App() {
             livePrice={livePrice}
             interval={interval}
             showProfile={profileVisible}
+            formatPrice={formatPrice}
+            colormapId={colormap}
           />
         ) : (
-          <MapView symbol={symbol} livePrice={livePrice} nonce={nonce} />
+          <MapView
+            symbol={symbol}
+            livePrice={livePrice}
+            nonce={nonce}
+            formatPrice={formatPrice}
+            colormapId={colormap}
+          />
         )}
       </main>
 
@@ -126,6 +144,7 @@ export default function App() {
         mode={map ? `${map.mode} · ${tiers.join('/')}×` : null}
         error={error}
         tape={tape}
+        formatPrice={formatPrice}
       />
 
       <footer className="disclaimer">
@@ -140,6 +159,9 @@ export default function App() {
         alerts={alerts}
         onChange={patchSettings}
         onClose={() => setSettingsOpen(false)}
+        formatPrice={formatPrice}
+        colormap={colormap}
+        onColormap={(id: ColormapId) => patchView({ colormap: id })}
       />
     </div>
   );

@@ -949,3 +949,75 @@ body {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ── intensity legend ──────────────────────────────────────────────────
+   An intensity scale needs a key: colour alone should not carry the
+   meaning, and showing each class's est. USD floor makes the thresholds
+   checkable rather than a matter of taste. */
+.legend {
+  position: absolute;
+  left: 10px;
+  top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 9px;
+  background: rgba(9, 11, 17, 0.82);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9.5px;
+  color: var(--dim);
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+}
+
+.legend__title {
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.legend__item i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+/* Stacked colormap picker in the settings drawer. */
+.seg--stack {
+  flex-direction: column;
+  gap: 3px;
+}
+
+.seg--stack .seg__btn {
+  min-height: 34px;
+  text-align: left;
+  justify-content: flex-start;
+  padding: 0 10px;
+}
+
+.ramp {
+  display: flex;
+  height: 10px;
+  margin: 9px 0 6px;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.ramp span {
+  flex: 1;
+}
+
+@media (max-width: 720px) {
+  /* The legend costs chart height a phone cannot spare. */
+  .legend {
+    display: none;
+  }
+}

@@ -5,11 +5,15 @@ import { csvFilename, profileToCsv } from '../engine/profileCsv';
 import { MAP_BINS, MAP_SCALP_INTERVAL, MAP_SWING_INTERVAL } from '../config';
 import { useHeatmap } from './hooks/useHeatmap';
 import { ProfileChart } from './ProfileChart';
+import type { PriceFormatter } from './hooks/usePriceFormat';
+import type { ColormapId } from '../engine/classes';
 
 interface Props {
   symbol: string;
   livePrice: number | null;
   nonce: number;
+  formatPrice: PriceFormatter;
+  colormapId: ColormapId;
 }
 
 /** Trigger a client-side download. No server round trip, so it works offline too. */
@@ -41,16 +45,16 @@ function useMode(symbol: string, interval: Interval, livePrice: number | null, n
   return { profile, loading, error, tiers: map?.tiers ?? [] };
 }
 
-export function MapView({ symbol, livePrice, nonce }: Props) {
+export function MapView({ symbol, livePrice, nonce, formatPrice, colormapId }: Props) {
   const scalp = useMode(symbol, MAP_SCALP_INTERVAL, livePrice, nonce);
   const swing = useMode(symbol, MAP_SWING_INTERVAL, livePrice, nonce);
 
   const exportMode = useCallback(
     (mode: 'scalping' | 'swing', interval: Interval, profile: typeof scalp.profile) => {
       if (!profile) return;
-      download(csvFilename(symbol, mode, interval), profileToCsv(profile));
+      download(csvFilename(symbol, mode, interval), profileToCsv(profile, formatPrice));
     },
-    [symbol],
+    [symbol, formatPrice],
   );
 
   return (
@@ -62,6 +66,8 @@ export function MapView({ symbol, livePrice, nonce }: Props) {
         loading={scalp.loading}
         error={scalp.error}
         onExport={() => exportMode('scalping', MAP_SCALP_INTERVAL, scalp.profile)}
+        formatPrice={formatPrice}
+        colormapId={colormapId}
       />
 
       <ProfileChart
@@ -71,6 +77,8 @@ export function MapView({ symbol, livePrice, nonce }: Props) {
         loading={swing.loading}
         error={swing.error}
         onExport={() => exportMode('swing', MAP_SWING_INTERVAL, swing.profile)}
+        formatPrice={formatPrice}
+        colormapId={colormapId}
       />
 
       <p className="map__help">

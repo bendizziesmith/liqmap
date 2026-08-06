@@ -1,4 +1,5 @@
 import type { ConnectionStatus, LiquidationEvent } from '../data/ws';
+import type { PriceFormatter } from './hooks/usePriceFormat';
 
 interface Props {
   status: ConnectionStatus;
@@ -7,6 +8,7 @@ interface Props {
   mode: string | null;
   error: string | null;
   tape: LiquidationEvent[];
+  formatPrice: PriceFormatter;
 }
 
 const LABEL: Record<ConnectionStatus, string> = {
@@ -17,7 +19,7 @@ const LABEL: Record<ConnectionStatus, string> = {
   closed: 'Closed',
 };
 
-export function StatusBar({ status, symbol, candles, mode, error, tape }: Props) {
+export function StatusBar({ status, symbol, candles, mode, error, tape, formatPrice }: Props) {
   return (
     <footer className="status">
       <span className="pill" data-state={status}>
@@ -34,7 +36,7 @@ export function StatusBar({ status, symbol, candles, mode, error, tape }: Props)
       <div className="tape" aria-label="Recent liquidations">
         {tape.slice(0, 6).map((e, i) => (
           <span className="tape__item" key={`${e.time}-${i}`} data-side={e.side}>
-            {e.side === 'long' ? 'L' : 'S'} {e.size.toPrecision(3)} @ {e.price.toPrecision(6)}
+            {e.side === 'long' ? 'L' : 'S'} {e.size.toPrecision(3)} @ {formatPrice(e.price)}
           </span>
         ))}
       </div>

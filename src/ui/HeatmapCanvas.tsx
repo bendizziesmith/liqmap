@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { HeatmapData } from '../engine/types';
 import { bucketToPrice, priceToBucket } from '../engine/grid';
-import { computeVmax, normalizeScore } from '../engine/normalize';
-import { alphaFor, inferno, TIER_COLORS } from '../engine/colormap';
+import { normalizeScore } from '../engine/normalize';
+import { COLORMAPS, classAlpha, classBreaks, classOf, type ColormapId } from '../engine/classes';
 import { lastColumn } from '../engine/profile';
 import { buildPanelProfile } from '../engine/panelProfile';
 import { formatUsd, formatUsdPrecise } from '../engine/usd';
+import type { PriceFormatter } from './hooks/usePriceFormat';
 import { priceToY, yToPrice } from './scale';
 import { axisZoomFactor, scaleAbout } from './axis';
 import { capturePointer, releasePointer } from './gesture';
@@ -38,6 +39,8 @@ interface Props {
   livePrice: number | null;
   interval: string;
   showProfile: boolean;
+  formatPrice: PriceFormatter;
+  colormapId: ColormapId;
 }
 
 type Region = 'plot' | 'priceAxis' | 'timeAxis' | 'panel';
@@ -72,27 +75,6 @@ function fitView(map: HeatmapData): View {
   return { c0, c1, p0, p1 };
 }
 
-function formatPrice(p: number): string {
-  if (p >= 1000) return p.toFixed(0);
-  if (p >= 1) return p.toFixed(2);
-  if (p >= 0.01) return p.toFixed(4);
-  return p.toFixed(6);
-}
-
-/**
- * Decimal places for a "specific price" readout.
- *
- * Derived from magnitude rather than fetching each symbol's `instruments-info` tick size:
- * it lands on the same precision for every symbol in scope and costs no extra request.
- */
-function formatTickPrice(p: number): string {
-  if (p >= 10_000) return p.toFixed(1);
-  if (p >= 100) return p.toFixed(2);
-  if (p >= 1) return p.toFixed(4);
-  if (p >= 0.01) return p.toFixed(5);
-  return p.toFixed(7);
-}
-
 function formatTime(ms: number, interval: string): string {
   const d = new Date(ms);
   const date = `${d.getDate()}/${d.getMonth() + 1}`;
@@ -102,7 +84,15 @@ function formatTime(ms: number, interval: string): string {
   return `${date} ${hh}:${mm}`;
 }
 
-export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProfile }: Props) {
+export function HeatmapCanvas({
+  map,
+  enabledTiers,
+  livePrice,
+  interval,
+  showProfile,
+  formatPrice,
+  colormapId,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const rasterRef = useRef<HTMLCanvasElement | null>(null);
@@ -110,6 +100,7 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
   const [hover, setHover] = useState<Hover | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [cursor, setCursor] = useState('crosshair');
+  const [breaksForLegend, setBreaksForLegend] = useState<number[]>([]);
 
   const combined = useMemo(() => {
     if (!map) return null;
@@ -213,7 +204,21 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
     const cols = Math.max(1, c1 - c0);
     const rows = Math.max(1, b1 - b0 + 1);
 
-    const vmax = computeVmax(map.matrices, enabledTiers, grid.nBuckets, c0, c1, b0, b1 + 1);
+    // Class breaks from the visible window, so zooming into a quiet region reveals its
+    // structure rather than flattening it all into the faintest class.
+    const visible: number[] = [];
+    for (let c = c0; c < c1; c++) {
+      const off = c * grid.nBuckets;
+      for (let b = b0; b <= b1; b++) {
+        const v = combined[off + b];
+        if (v > 0) visible.push(v);
+      }
+    }
+    const breaks = classBreaks(visible);
+    setBreaksForLegend((prev) =>
+      prev.length === breaks.length && prev.every((v, i) => v === breaks[i]) ? prev : breaks,
+    );
+    const ramp = COLORMAPS[colormapId] ?? COLORMAPS.inferno;
 
     let raster = rasterRef.current;
     if (!raster) {
@@ -231,13 +236,17 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
       const offset = c * grid.nBuckets;
       const cx = c - c0;
       for (let b = b0; b <= b1; b++) {
-        const x = normalizeScore(combined[offset + b], vmax);
-        const [r, g, bl] = inferno(x);
+        const cls = classOf(combined[offset + b], breaks);
         const i = ((b1 - b) * cols + cx) * 4;
+        if (cls < 0) {
+          px[i + 3] = 0;
+          continue;
+        }
+        const [r, g, bl] = ramp.classColors[cls];
         px[i] = r;
         px[i + 1] = g;
         px[i + 2] = bl;
-        px[i + 3] = alphaFor(x);
+        px[i + 3] = classAlpha(cls);
       }
     }
     rctx.putImageData(img, 0, 0);
@@ -298,14 +307,14 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
           // Same 0.68 gamma as the heat colours; without it the unswept shelf at the grid
           // edge owns the scale and everything near price is a hairline.
           const barW = normalizeScore(row.total, panel.rowMax) * usable;
-          const hot = row.total >= panel.hotThreshold && panel.hotThreshold > 0;
+          const hot = classOf(row.total, breaks) === COLORMAPS.inferno.classColors.length - 1;
 
           let x = axisX;
           for (let t = 0; t < row.tiers.length; t++) {
             const v = row.tiers[t];
             if (v <= 0) continue;
             const w = (v / row.total) * barW;
-            ctx.fillStyle = hot ? '#f59e0b' : (TIER_COLORS[t] ?? TIER_COLORS[TIER_COLORS.length - 1]);
+            ctx.fillStyle = hot ? ramp.hot : ramp.tierColors[t] ?? ramp.tierColors[ramp.tierColors.length - 1];
             ctx.fillRect(x - w, r, w, 1);
             x -= w;
           }
@@ -629,6 +638,7 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
     return () => el.removeEventListener('wheel', handler);
   }, []);
 
+  const ramp = COLORMAPS[colormapId] ?? COLORMAPS.inferno;
   const hoverTotal = hover ? hover.scores.reduce((a, s, i) => a + (enabledTiers[i] ? s : 0), 0) : 0;
   const panelRow = hover && panel ? panel.rows[hover.row] : null;
 
@@ -660,12 +670,12 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
         >
           <div className="tip__row tip__row--head">
             <span>price</span>
-            <strong>{formatTickPrice(panelRow.price)}</strong>
+            <strong>{formatPrice(panelRow.price)}</strong>
           </div>
           {map.tiers.map((t, i) => (
             <div className="tip__row" key={t} data-off={!enabledTiers[i]}>
               <span>
-                <i className="tip__swatch" style={{ background: TIER_COLORS[i] }} />
+                <i className="tip__swatch" style={{ background: ramp.tierColors[i] }} />
                 {t}×
               </span>
               <span>{panelRow.tiers[i] > 0 ? formatUsdPrecise(panelRow.tiers[i]) : '—'}</span>
@@ -697,12 +707,12 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
         >
           <div className="tip__row tip__row--head">
             <span>{formatTime(hover.time, interval)}</span>
-            <strong>{formatTickPrice(hover.price)}</strong>
+            <strong>{formatPrice(hover.price)}</strong>
           </div>
           {map.tiers.map((t, i) => (
             <div className="tip__row" key={t} data-off={!enabledTiers[i]}>
               <span>
-                <i className="tip__swatch" style={{ background: TIER_COLORS[i] }} />
+                <i className="tip__swatch" style={{ background: ramp.tierColors[i] }} />
                 {t}×
               </span>
               <span>{hover.scores[i] > 0 ? formatUsd(hover.scores[i]) : '—'}</span>
@@ -713,6 +723,20 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
             <strong>{hoverTotal > 0 ? formatUsdPrecise(hoverTotal) : '—'}</strong>
           </div>
           <div className="tip__note">estimated USD, not exchange-reported</div>
+        </div>
+      )}
+
+      {/* Intensity scale. Charts guidance is explicit that an intensity map needs a legend
+          and must not lean on colour alone — this also makes the class breaks checkable. */}
+      {map && breaksForLegend.length > 0 && (
+        <div className="legend" aria-label="Intensity classes, estimated USD">
+          <span className="legend__title">est. $ / level</span>
+          {ramp.classColors.map((c, i) => (
+            <span className="legend__item" key={i}>
+              <i style={{ background: `rgb(${c[0]},${c[1]},${c[2]})`, opacity: classAlpha(i) / 255 }} />
+              {i === 0 ? `< ${formatUsd(breaksForLegend[0])}` : `${formatUsd(breaksForLegend[i - 1])}+`}
+            </span>
+          ))}
         </div>
       )}
 

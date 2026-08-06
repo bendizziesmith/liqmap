@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LiquidationProfile, ProfileBin } from '../engine/profile';
-import { TIER_COLORS } from '../engine/colormap';
+import { COLORMAPS, type ColormapId } from '../engine/classes';
 import { formatUsd, formatUsdPrecise } from '../engine/usd';
+import type { PriceFormatter } from './hooks/usePriceFormat';
 import {
   capturePointer,
   pinchAnchor,
@@ -27,6 +28,8 @@ interface Props {
   loading: boolean;
   error: string | null;
   onExport: () => void;
+  formatPrice: PriceFormatter;
+  colormapId: ColormapId;
 }
 
 interface Hover {
@@ -36,26 +39,17 @@ interface Hover {
   index: number;
 }
 
-function formatPrice(p: number): string {
-  if (p >= 1000) return p.toFixed(0);
-  if (p >= 1) return p.toFixed(3);
-  if (p >= 0.01) return p.toFixed(5);
-  return p.toFixed(7);
-}
-
-/**
- * Decimal places for a "specific price" readout, derived from magnitude rather than each
- * symbol's `instruments-info` tick size — same result for the symbols in scope, no request.
- */
-function formatTickPrice(p: number): string {
-  if (p >= 10_000) return p.toFixed(1);
-  if (p >= 100) return p.toFixed(2);
-  if (p >= 1) return p.toFixed(4);
-  if (p >= 0.01) return p.toFixed(5);
-  return p.toFixed(7);
-}
-
-export function ProfileChart({ title, subtitle, profile, loading, error, onExport }: Props) {
+export function ProfileChart({
+  title,
+  subtitle,
+  profile,
+  loading,
+  error,
+  onExport,
+  formatPrice,
+  colormapId,
+}: Props) {
+  const ramp = COLORMAPS[colormapId] ?? COLORMAPS.inferno;
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -184,7 +178,7 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
         const v = b.tiers[t];
         if (v <= 0) continue;
         const h = plot.h - yOfTotal(v);
-        ctx.fillStyle = TIER_COLORS[t] ?? TIER_COLORS[TIER_COLORS.length - 1];
+        ctx.fillStyle = ramp.tierColors[t] ?? ramp.tierColors[ramp.tierColors.length - 1];
         ctx.fillRect(xOf(i), y - h, Math.max(1, barW - gap), h);
         y -= h;
       }
@@ -306,7 +300,7 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
       ctx.stroke();
       ctx.restore();
     }
-  }, [profile, range, plot, size, visibleMax, hover, nBins]);
+  }, [profile, range, plot, size, visibleMax, hover, nBins, formatPrice, ramp]);
 
   const onWheel = useCallback(
     (e: React.WheelEvent) => {
@@ -499,13 +493,13 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
               {/* A specific price, not a from–to range: a band is a level you trade against. */}
               <span>price</span>
               <strong data-side={hoverSide ?? undefined}>
-                {formatTickPrice(hover.bin.priceMid)}
+                {formatPrice(hover.bin.priceMid)}
               </strong>
             </div>
             {profile.tiers.map((t, i) => (
               <div className="tip__row" key={t}>
                 <span>
-                  <i className="tip__swatch" style={{ background: TIER_COLORS[i] }} />
+                  <i className="tip__swatch" style={{ background: ramp.tierColors[i] }} />
                   {t}×
                 </span>
                 <span>

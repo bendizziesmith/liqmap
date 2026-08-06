@@ -1,6 +1,8 @@
 import type { Settings as SettingsValues } from '../config';
 import type { AlertsState } from './hooks/useAlerts';
 import { BellIcon, CloseIcon } from './icons';
+import type { PriceFormatter } from './hooks/usePriceFormat';
+import { COLORMAPS, colormapIds, type ColormapId } from '../engine/classes';
 
 interface Props {
   open: boolean;
@@ -8,9 +10,21 @@ interface Props {
   alerts: AlertsState;
   onChange: (patch: Partial<SettingsValues>) => void;
   onClose: () => void;
+  formatPrice: PriceFormatter;
+  colormap: ColormapId;
+  onColormap: (id: ColormapId) => void;
 }
 
-export function Settings({ open, values, alerts, onChange, onClose }: Props) {
+export function Settings({
+  open,
+  values,
+  alerts,
+  onChange,
+  onClose,
+  formatPrice,
+  colormap,
+  onColormap,
+}: Props) {
   if (!open) return null;
 
   const blocked = alerts.permission === 'denied' || alerts.permission === 'unsupported';
@@ -25,6 +39,32 @@ export function Settings({ open, values, alerts, onChange, onClose }: Props) {
             <CloseIcon />
           </button>
         </div>
+
+        <section className="drawer__section">
+          <h3>Heat colours</h3>
+          <div className="seg seg--stack" role="group" aria-label="Colormap">
+            {colormapIds().map((id) => (
+              <button
+                key={id}
+                type="button"
+                className="seg__btn"
+                aria-pressed={colormap === id}
+                onClick={() => onColormap(id)}
+              >
+                {COLORMAPS[id].label}
+              </button>
+            ))}
+          </div>
+          <div className="ramp" aria-hidden="true">
+            {COLORMAPS[colormap].classColors.map((c, i) => (
+              <span key={i} style={{ background: `rgb(${c[0]},${c[1]},${c[2]})` }} />
+            ))}
+          </div>
+          <span className="field__hint">
+            Five intensity classes, lightest to heaviest. Applies to the heatmap, the side
+            panel and the Map.
+          </span>
+        </section>
 
         <section className="drawer__section">
           <h3>Proximity alerts</h3>
@@ -96,7 +136,7 @@ export function Settings({ open, values, alerts, onChange, onClose }: Props) {
               {alerts.log.map((a, i) => (
                 <li key={`${a.symbol}-${a.price}-${a.at}-${i}`}>
                   <strong>{a.symbol}</strong>
-                  <span>{a.price.toPrecision(6)}</span>
+                  <span>{formatPrice(a.price)}</span>
                   <span data-dir={a.distancePct >= 0 ? 'up' : 'down'}>
                     {Math.abs(a.distancePct).toFixed(2)}%
                   </span>
@@ -110,9 +150,9 @@ export function Settings({ open, values, alerts, onChange, onClose }: Props) {
         <section className="drawer__section">
           <h3>About the numbers</h3>
           <p className="note">
-            Scores are relative estimates of where leveraged positions would be liquidated,
-            derived from candles and open interest. They are not dollar amounts and not
-            exchange-reported positions.
+            Figures are estimated USD notional, modelled from candle turnover and open
+            interest — not exchange-reported open positions. Prices use each instrument's
+            own tick size.
           </p>
           <p className="note note--build">
             build <code>{__BUILD_ID__}</code>

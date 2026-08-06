@@ -1,5 +1,6 @@
 import type { Band } from '../engine/types';
 import { nearestBand } from '../engine/bands';
+import type { PriceFormatter } from './hooks/usePriceFormat';
 
 interface Props {
   symbols: string[];
@@ -8,16 +9,18 @@ interface Props {
   bands: Record<string, Band[]>;
   minScore: number;
   onSelect: (s: string) => void;
+  formatFor: (symbol: string) => PriceFormatter;
 }
 
-function fmtPrice(p: number | undefined): string {
-  if (p === undefined) return '—';
-  if (p >= 1000) return p.toFixed(1);
-  if (p >= 1) return p.toFixed(3);
-  return p.toFixed(5);
-}
-
-export function Watchlist({ symbols, active, prices, bands, minScore, onSelect }: Props) {
+export function Watchlist({
+  symbols,
+  active,
+  prices,
+  bands,
+  minScore,
+  onSelect,
+  formatFor,
+}: Props) {
   return (
     <nav className="watch" aria-label="Watchlist">
       {symbols.map((s) => {
@@ -36,7 +39,7 @@ export function Watchlist({ symbols, active, prices, bands, minScore, onSelect }
             onClick={() => onSelect(s)}
           >
             <span className="watch__sym">{s.replace('USDT', '')}</span>
-            <span className="watch__price">{fmtPrice(price)}</span>
+            <span className="watch__price">{price === undefined ? '—' : formatFor(s)(price)}</span>
             <span className="watch__dist" data-hot={hot || undefined} data-none={!near || undefined}>
               {dist === undefined
                 ? '—'

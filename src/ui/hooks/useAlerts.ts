@@ -30,6 +30,7 @@ export function useAlerts(
   price: number | null,
   bands: Band[],
   settings: Settings,
+  formatPrice: (p: number) => string = (p) => String(p),
 ): AlertsState {
   const [permission, setPermission] = useState<PermissionState>(currentPermission);
   const [log, setLog] = useState<AlertsState['log']>([]);
@@ -66,7 +67,7 @@ export function useAlerts(
       if (permission === 'granted') {
         const side = c.distancePct >= 0 ? 'above' : 'below';
         new Notification(`${symbol} approaching liquidation band`, {
-          body: `Strength ${c.score.toFixed(0)} at ${c.price.toPrecision(6)} — ${Math.abs(
+          body: `Strength ${c.score.toFixed(0)} at ${formatPrice(c.price)} — ${Math.abs(
             c.distancePct,
           ).toFixed(2)}% ${side} price`,
           tag: alertKey(symbol, c.price),
@@ -75,7 +76,7 @@ export function useAlerts(
     }
 
     setLog((l) => [...due.map((c) => ({ ...c, symbol, at: now })), ...l].slice(0, 20));
-  }, [symbol, price, bands, settings, permission]);
+  }, [symbol, price, bands, settings, permission, formatPrice]);
 
   return { permission, request, log };
 }

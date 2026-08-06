@@ -1,4 +1,5 @@
 import type { Interval } from './engine/types';
+import type { ColormapId } from './engine/classes';
 
 export const PRESET_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT'];
 
@@ -28,6 +29,7 @@ export interface ViewState {
   tab: Tab;
   /** Right-docked liquidation profile on the heatmap. */
   showProfile: boolean;
+  colormap: ColormapId;
 }
 
 export const DEFAULT_VIEW: ViewState = {
@@ -36,6 +38,7 @@ export const DEFAULT_VIEW: ViewState = {
   enabledTiers: [true, true, true, true],
   tab: 'heatmap',
   showProfile: true,
+  colormap: 'inferno',
 };
 
 /**
