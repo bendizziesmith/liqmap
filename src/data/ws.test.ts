@@ -78,6 +78,16 @@ describe('connection', () => {
     ]);
   });
 
+  it('adds the kline topic for the focused symbol when an interval is given', () => {
+    new BybitSocket().connect(['BTCUSDT', 'ETHUSDT'], { klineSymbol: 'BTCUSDT', klineInterval: '240' });
+    last().open();
+
+    const frame = JSON.parse(last().sent[0]);
+    // Only the focused symbol needs candles; subscribing all five would be wasted traffic.
+    expect(frame.args).toContain('kline.240.BTCUSDT');
+    expect(frame.args).not.toContain('kline.240.ETHUSDT');
+  });
+
   it('reports the live status only once the socket is open', () => {
     const statuses: string[] = [];
     const s = new BybitSocket({ onStatus: (x) => statuses.push(x) });
@@ -159,6 +169,55 @@ describe('message handling', () => {
       data: [{ T: 1, s: 'BTCUSDT', S: 'Sell', v: '2.5', p: '64000' }],
     });
     expect(events[0]).toMatchObject({ side: 'long', size: 2.5, price: 64000 });
+  });
+
+  it('reports a forming kline as unconfirmed, with numeric OHLC and turnover', () => {
+    const bars: Array<{ confirm: boolean; candle: { close: number; turnover: number } }> = [];
+    const s = new BybitSocket({ onKline: (k) => bars.push(k) });
+    s.connect(['BTCUSDT'], { klineSymbol: 'BTCUSDT', klineInterval: '240' });
+    last().open();
+
+    last().emit({
+      topic: 'kline.240.BTCUSDT',
+      data: [
+        {
+          start: 1000,
+          open: '100',
+          high: '110',
+          low: '95',
+          close: '108',
+          volume: '5',
+          turnover: '540',
+          confirm: false,
+        },
+      ],
+    });
+
+    expect(bars).toHaveLength(1);
+    expect(bars[0].confirm).toBe(false);
+    expect(bars[0].candle).toMatchObject({ close: 108, turnover: 540 });
+  });
+
+  it('flags a confirmed kline so the caller can refetch for the new candle', () => {
+    const bars: Array<{ confirm: boolean }> = [];
+    const s = new BybitSocket({ onKline: (k) => bars.push(k) });
+    s.connect(['BTCUSDT'], { klineSymbol: 'BTCUSDT', klineInterval: '240' });
+    last().open();
+
+    last().emit({
+      topic: 'kline.240.BTCUSDT',
+      data: [{ start: 1000, open: '1', high: '1', low: '1', close: '1', volume: '1', turnover: '1', confirm: true }],
+    });
+    expect(bars[0].confirm).toBe(true);
+  });
+
+  it('ignores a kline frame with no rows', () => {
+    const bars: unknown[] = [];
+    const s = new BybitSocket({ onKline: (k) => bars.push(k) });
+    s.connect(['BTCUSDT'], { klineSymbol: 'BTCUSDT', klineInterval: '240' });
+    last().open();
+    last().emit({ topic: 'kline.240.BTCUSDT', data: [] });
+    expect(bars).toEqual([]);
   });
 
   it('survives a malformed frame without throwing', () => {

@@ -3,7 +3,7 @@ import type { Candle, Interval, OiPoint } from '../engine/types';
 const BASE = 'https://api.bybit.com';
 
 /** Bybit's kline interval codes. */
-const KLINE_INTERVAL: Record<Interval, string> = {
+export const KLINE_INTERVAL: Record<Interval, string> = {
   '5m': '5',
   '15m': '15',
   '1h': '60',

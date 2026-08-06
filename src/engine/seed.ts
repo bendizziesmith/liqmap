@@ -2,9 +2,6 @@ import type { Candle, Grid } from './types';
 import { priceToBucket, rangeToBuckets } from './grid';
 import { ANCHOR_WEIGHTS, CAPITAL_SPLIT, longLiqPrice, shortLiqPrice } from './tiers';
 
-/** A single candle can only count for so much, however violent. */
-const TURNOVER_CLAMP = 5;
-
 /**
  * Erase every level the candle traded through.
  *
@@ -19,30 +16,26 @@ export function clearRange(levels: Float32Array[], grid: Grid, low: number, high
   }
 }
 
-/** Turnover relative to the median candle, clamped so one outlier cannot dominate. */
-export function turnoverWeight(turnover: number, medianTurnover: number): number {
-  if (medianTurnover <= 0) return 1;
-  return Math.min(turnover / medianTurnover, TURNOVER_CLAMP);
-}
-
 /**
- * Deposit the liquidation levels implied by one candle.
+ * Deposit the estimated USD notional implied by one candle.
  *
- * Three entry anchors × two sides × four tiers = 24 deposits, each sized by the candle's
- * turnover weight, its open-interest factor, the anchor's share, and the tier's share of
- * capital. Both sides receive the full tier amount — the book is assumed symmetric, and the
- * resulting global factor of two is irrelevant to a relative colour scale.
+ * The candle's turnover is quote-currency volume — the dollars that actually changed hands —
+ * so bucket values come out as estimated USD at risk rather than an arbitrary score. That
+ * notional is split three ways by entry anchor, four ways by leverage tier, and finally in
+ * half between the long and short side: the trades that made up the turnover opened both,
+ * and depositing the full amount on each side would count the same dollars twice.
+ *
+ * With no clearing, the sum of every bucket equals `turnover × oiFactor`.
  */
 export function seedCandle(
   levels: Float32Array[],
   grid: Grid,
   tiers: number[],
   candle: Candle,
-  medianTurnover: number,
   oiFactor: number,
 ): void {
-  const weight = turnoverWeight(candle.turnover, medianTurnover) * oiFactor;
-  if (weight <= 0) return;
+  const notional = candle.turnover * oiFactor;
+  if (!(notional > 0)) return;
 
   const anchors: Array<[number, number]> = [
     [candle.close, ANCHOR_WEIGHTS.close],
@@ -53,13 +46,13 @@ export function seedCandle(
   for (let t = 0; t < tiers.length; t++) {
     const leverage = tiers[t];
     const tierLevels = levels[t];
-    const tierShare = CAPITAL_SPLIT[t] * weight;
+    const tierNotional = CAPITAL_SPLIT[t] * notional;
 
     for (const [entry, anchorShare] of anchors) {
       if (entry <= 0) continue;
-      const amount = tierShare * anchorShare;
-      tierLevels[priceToBucket(grid, longLiqPrice(entry, leverage))] += amount;
-      tierLevels[priceToBucket(grid, shortLiqPrice(entry, leverage))] += amount;
+      const perSide = (tierNotional * anchorShare) / 2;
+      tierLevels[priceToBucket(grid, longLiqPrice(entry, leverage))] += perSide;
+      tierLevels[priceToBucket(grid, shortLiqPrice(entry, leverage))] += perSide;
     }
   }
 }

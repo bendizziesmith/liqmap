@@ -1,3 +1,5 @@
+import type { Candle } from '../engine/types';
+
 const ENDPOINT = 'wss://stream.bybit.com/v5/public/linear';
 
 /** Bybit closes idle public sockets; 20s keeps us comfortably inside that window. */
@@ -21,10 +23,25 @@ export interface LiquidationEvent {
   time: number;
 }
 
+export interface KlineUpdate {
+  symbol: string;
+  /** False while the candle is still forming; true on the tick that closes it. */
+  confirm: boolean;
+  candle: Candle;
+}
+
 export interface SocketHandlers {
   onTicker?: (t: TickerUpdate) => void;
   onLiquidation?: (e: LiquidationEvent) => void;
+  onKline?: (k: KlineUpdate) => void;
   onStatus?: (s: ConnectionStatus) => void;
+}
+
+export interface SubscribeOptions {
+  /** Only the focused symbol needs candles; the rest would be wasted bandwidth. */
+  klineSymbol?: string;
+  /** Bybit interval code, e.g. `240` for 4h. */
+  klineInterval?: string;
 }
 
 /**
@@ -39,12 +56,14 @@ export class BybitSocket {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private attempt = 0;
   private symbols: string[] = [];
+  private options: SubscribeOptions = {};
   private deliberatelyClosed = false;
 
   constructor(private handlers: SocketHandlers = {}) {}
 
-  connect(symbols: string[]): void {
+  connect(symbols: string[], options: SubscribeOptions = {}): void {
     this.symbols = symbols;
+    this.options = options;
     this.deliberatelyClosed = false;
     this.open();
   }
@@ -60,6 +79,8 @@ export class BybitSocket {
       this.setStatus('live');
 
       const args = this.symbols.flatMap((s) => [`tickers.${s}`, `allLiquidation.${s}`]);
+      const { klineSymbol, klineInterval } = this.options;
+      if (klineSymbol && klineInterval) args.push(`kline.${klineInterval}.${klineSymbol}`);
       if (args.length > 0) ws.send(JSON.stringify({ op: 'subscribe', args }));
 
       this.pingTimer = setInterval(() => {
@@ -90,6 +111,29 @@ export class BybitSocket {
       // Ticker frames are deltas: most carry no price at all.
       if (d?.lastPrice != null && d.symbol) {
         this.handlers.onTicker?.({ symbol: d.symbol, price: Number(d.lastPrice) });
+      }
+      return;
+    }
+
+    if (msg.topic.startsWith('kline.')) {
+      // Topic is `kline.{interval}.{symbol}`.
+      const symbol = msg.topic.split('.')[2] ?? '';
+      const rows = (msg.data ?? []) as Array<Record<string, string | number | boolean>>;
+      for (const r of rows) {
+        if (r.start === undefined) continue;
+        this.handlers.onKline?.({
+          symbol,
+          confirm: r.confirm === true,
+          candle: {
+            start: Number(r.start),
+            open: Number(r.open),
+            high: Number(r.high),
+            low: Number(r.low),
+            close: Number(r.close),
+            volume: Number(r.volume),
+            turnover: Number(r.turnover),
+          },
+        });
       }
       return;
     }

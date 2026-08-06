@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LiquidationProfile, ProfileBin } from '../engine/profile';
 import { TIER_COLORS } from '../engine/colormap';
+import { formatUsd, formatUsdPrecise } from '../engine/usd';
 import {
   capturePointer,
   pinchAnchor,
@@ -10,6 +11,7 @@ import {
   zoomDomain,
   type Point,
 } from './gesture';
+import { axisZoomFactor } from './axis';
 
 const AXIS_H = 20; // price labels under the plot
 const AXIS_W = 46; // cumulative labels on the right
@@ -41,6 +43,18 @@ function formatPrice(p: number): string {
   return p.toFixed(7);
 }
 
+/**
+ * Decimal places for a "specific price" readout, derived from magnitude rather than each
+ * symbol's `instruments-info` tick size — same result for the symbols in scope, no request.
+ */
+function formatTickPrice(p: number): string {
+  if (p >= 10_000) return p.toFixed(1);
+  if (p >= 100) return p.toFixed(2);
+  if (p >= 1) return p.toFixed(4);
+  if (p >= 0.01) return p.toFixed(5);
+  return p.toFixed(7);
+}
+
 export function ProfileChart({ title, subtitle, profile, loading, error, onExport }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -48,7 +62,7 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
   const [hover, setHover] = useState<Hover | null>(null);
   /** Visible slice of the bin array: [i0, i1). Zoom and pan act on the price axis. */
   const [range, setRange] = useState<[number, number] | null>(null);
-  const dragRef = useRef<{ x: number; range: [number, number] } | null>(null);
+  const dragRef = useRef<{ x: number; range: [number, number]; axis: boolean } | null>(null);
   const pointers = useRef(new Map<number, Point>());
   const pinchRef = useRef<{ spread: number; range: [number, number] } | null>(null);
 
@@ -157,8 +171,8 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
     };
 
     const pi = profile.priceBinIndex;
-    if (pi > i0) drawCum(Math.min(pi, i1 - 1), i0, (b) => b.cumLong, 'rgba(248,113,113,0.13)');
-    if (pi < i1 - 1) drawCum(Math.max(pi, i0), i1 - 1, (b) => b.cumShort, 'rgba(94,234,212,0.13)');
+    if (pi > i0) drawCum(Math.min(pi, i1 - 1), i0, (b) => b.cumLong, 'rgba(74,222,128,0.13)');
+    if (pi < i1 - 1) drawCum(Math.max(pi, i0), i1 - 1, (b) => b.cumShort, 'rgba(245,158,11,0.13)');
 
     // ---- stacked bars ----
     const gap = barW > 3 ? 1 : 0;
@@ -196,8 +210,8 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
       ctx.stroke();
     };
 
-    if (pi > i0) drawLine(Math.min(pi, i1 - 1), i0, (b) => b.cumLong, 'rgba(248,113,113,0.85)');
-    if (pi < i1 - 1) drawLine(Math.max(pi, i0), i1 - 1, (b) => b.cumShort, 'rgba(94,234,212,0.85)');
+    if (pi > i0) drawLine(Math.min(pi, i1 - 1), i0, (b) => b.cumLong, 'rgba(74,222,128,0.9)');
+    if (pi < i1 - 1) drawLine(Math.max(pi, i0), i1 - 1, (b) => b.cumShort, 'rgba(245,158,11,0.9)');
 
     // ---- current price marker ----
     if (pi >= i0 && pi < i1) {
@@ -231,8 +245,20 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
       const v = (visibleMax.cum * g) / 4;
       // Clamp the baseline: the top tick sits at y=0 and would be sliced in half.
       const y = Math.min(plot.h - 6, Math.max(6, yOfCum(v)));
-      ctx.fillText(v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(0), plot.w + 5, y);
+      ctx.fillText(formatUsd(v), plot.w + 5, y);
     }
+
+    // Y-axis title, rotated up the left edge.
+    ctx.save();
+    ctx.translate(9, plot.h / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = 'rgba(148,163,184,0.65)';
+    ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.fillText('Est. Liquidation Volume (USD)', 0, 0);
+    ctx.restore();
+    ctx.textAlign = 'left';
 
     ctx.textBaseline = 'top';
     const pTicks = Math.max(2, Math.min(7, Math.floor(plot.w / 90)));
@@ -310,7 +336,10 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
         pinchRef.current = { spread: spreadX(a, b), range };
         dragRef.current = null;
       } else {
-        dragRef.current = { x: e.clientX, range };
+        // Below the plot is the price axis: dragging it zooms rather than pans, matching
+        // the heatmap and TradingView.
+        const onAxis = e.clientY - rect.top > plot.h;
+        dragRef.current = { x: e.clientX, range, axis: onAxis };
       }
     },
     [range],
@@ -337,6 +366,21 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
             start.range,
             pinchFactor(start.spread, spreadX(a, b)),
             pinchAnchor(a, b, plot.w),
+            [0, nBins],
+            MIN_BINS,
+          ),
+        );
+        setHover(null);
+        return;
+      }
+
+      if (dragRef.current?.axis) {
+        const d = dragRef.current;
+        setRange(
+          zoomDomain(
+            d.range,
+            axisZoomFactor(d.x - e.clientX),
+            0.5,
             [0, nBins],
             MIN_BINS,
           ),
@@ -450,10 +494,11 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
             }}
           >
             <div className="tip__row tip__row--head">
-              <span>
-                {formatPrice(hover.bin.priceFrom)}–{formatPrice(hover.bin.priceTo)}
-              </span>
-              <strong data-side={hoverSide ?? undefined}>{hoverSide}</strong>
+              {/* A specific price, not a from–to range: a band is a level you trade against. */}
+              <span>price</span>
+              <strong data-side={hoverSide ?? undefined}>
+                {formatTickPrice(hover.bin.priceMid)}
+              </strong>
             </div>
             {profile.tiers.map((t, i) => (
               <div className="tip__row" key={t}>
@@ -461,19 +506,30 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
                   <i className="tip__swatch" style={{ background: TIER_COLORS[i] }} />
                   {t}×
                 </span>
-                <span>{hover.bin.tiers[i] > 0 ? hover.bin.tiers[i].toFixed(2) : '—'}</span>
+                <span>
+                  {hover.bin.tiers[i] > 0 ? formatUsdPrecise(hover.bin.tiers[i]) : '—'}
+                </span>
               </div>
             ))}
             <div className="tip__row tip__row--total">
-              <span>total</span>
-              <strong>{hover.bin.total > 0 ? hover.bin.total.toFixed(2) : '—'}</strong>
+              <span>total est.</span>
+              <strong>{hover.bin.total > 0 ? formatUsdPrecise(hover.bin.total) : '—'}</strong>
             </div>
             <div className="tip__row">
-              <span>cumulative</span>
               <span>
-                {Math.max(hover.bin.cumLong, hover.bin.cumShort).toFixed(1)}
+                <i className="tip__swatch" style={{ background: '#4ade80' }} />
+                Cumulative Longs
               </span>
+              <span>{hover.bin.cumLong > 0 ? formatUsd(hover.bin.cumLong) : '—'}</span>
             </div>
+            <div className="tip__row">
+              <span>
+                <i className="tip__swatch" style={{ background: '#f59e0b' }} />
+                Cumulative Shorts
+              </span>
+              <span>{hover.bin.cumShort > 0 ? formatUsd(hover.bin.cumShort) : '—'}</span>
+            </div>
+            <div className="tip__note">estimated USD, not exchange-reported</div>
           </div>
         )}
       </div>

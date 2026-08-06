@@ -44,6 +44,13 @@ export interface HeatmapData {
   nCols: number;
   /** Candle backing each column, oldest-first. `candles[i]` ↔ column `i`. */
   candles: Candle[];
+  /**
+   * Active levels as of the *second-to-last* candle. Lets a still-forming candle be
+   * re-seeded into the final column without replaying the whole walk.
+   */
+  baseline: Float32Array[];
+  /** OI factor applied to the final candle, reused when that candle is re-seeded live. */
+  lastOiFactor: number;
 }
 
 /** A contiguous run of high-score buckets, used by the watchlist and alerts. */

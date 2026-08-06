@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Interval } from './engine/types';
 import { tiersForMode, modeForInterval } from './engine/tiers';
 import { topBands, bandsWithin } from './engine/bands';
@@ -11,8 +11,9 @@ import { Watchlist } from './ui/Watchlist';
 import { Settings } from './ui/Settings';
 import { StatusBar } from './ui/StatusBar';
 import { usePersisted } from './ui/hooks/usePersisted';
-import { useHeatmap } from './ui/hooks/useHeatmap';
+import { useHeatmap, useLiveHeatmap } from './ui/hooks/useHeatmap';
 import { useLive } from './ui/hooks/useLive';
+import { KLINE_INTERVAL } from './data/rest';
 import { useWatchlist } from './ui/hooks/useWatchlist';
 import { useAlerts } from './ui/hooks/useAlerts';
 import { useMedia } from './ui/hooks/useMedia';
@@ -21,6 +22,7 @@ export default function App() {
   const [view, patchView] = usePersisted('liqmap.view', DEFAULT_VIEW);
   const [settings, patchSettings] = usePersisted('liqmap.settings', DEFAULT_SETTINGS);
   const [nonce, setNonce] = useState(0);
+  const [closedNonce, setClosedNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const { symbol, interval, enabledTiers, tab, showProfile } = view;
@@ -30,7 +32,7 @@ export default function App() {
   const narrow = useMedia('(max-width: 720px)');
   const profileVisible = showProfile && !narrow;
 
-  const { map, loading, error } = useHeatmap(symbol, interval, nonce);
+  const fetched = useHeatmap(symbol, interval, nonce + closedNonce);
 
   // A custom symbol joins the live feed and the watchlist strip alongside the presets.
   const symbols = useMemo(
@@ -38,7 +40,20 @@ export default function App() {
     [symbol],
   );
 
-  const { prices, status, tape } = useLive(symbols, symbol);
+  const { prices, status, tape, formingCandle, candleClosed } = useLive(
+    symbols,
+    symbol,
+    KLINE_INTERVAL[interval],
+  );
+
+  // Fold the forming candle into the map so a sweep clears its bars without a reload.
+  const { map, loading, error } = useLiveHeatmap(fetched, formingCandle);
+
+  // A closed candle needs a refetch: the new one can extend the price range, which means
+  // rebucketing every column rather than re-seeding the last.
+  useEffect(() => {
+    if (candleClosed > 0) setClosedNonce((n) => n + 1);
+  }, [candleClosed]);
   const watchBands = useWatchlist(symbols, interval);
   const livePrice = prices[symbol] ?? map?.candles.at(-1)?.close ?? null;
 
@@ -114,9 +129,9 @@ export default function App() {
       />
 
       <footer className="disclaimer">
-        Liquidation levels are <strong>estimates</strong> derived from public market data —
-        exchanges do not publish per-position leverage. Scores are relative, not USD. Not
-        financial advice.
+        Liquidation levels and USD figures are <strong>estimates</strong> modelled from public
+        market data — exchanges do not publish per-position leverage or open positions. Not
+        exchange-reported, and not financial advice.
       </footer>
 
       <Settings

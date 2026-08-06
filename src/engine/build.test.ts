@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildHeatmap, medianOf, valueAt } from './build';
+import { buildHeatmap, reseedLast, valueAt } from './build';
 import { priceToBucket } from './grid';
 import { longLiqPrice } from './tiers';
 import type { Candle } from './types';
@@ -9,20 +9,6 @@ const H = 3_600_000;
 function candle(i: number, o: number, h: number, l: number, c: number, turnover = 100): Candle {
   return { start: i * H, open: o, high: h, low: l, close: c, volume: 1, turnover };
 }
-
-describe('medianOf', () => {
-  it('takes the middle value of an odd-length series', () => {
-    expect(medianOf([3, 1, 2])).toBe(2);
-  });
-
-  it('averages the two middle values of an even-length series', () => {
-    expect(medianOf([4, 1, 3, 2])).toBe(2.5);
-  });
-
-  it('returns zero for an empty series', () => {
-    expect(medianOf([])).toBe(0);
-  });
-});
 
 describe('buildHeatmap shape', () => {
   const candles = [candle(0, 100, 101, 99, 100), candle(1, 100, 102, 98, 101)];
@@ -133,6 +119,133 @@ describe('candle ordering', () => {
     const ti = map.tiers.indexOf(5);
     const b = priceToBucket(map.grid, 120);
     expect(valueAt(map, ti, 1, b)).toBeGreaterThan(0);
+  });
+});
+
+describe('estimated USD conservation', () => {
+  it('puts exactly the candle turnover into the grid when nothing is cleared', () => {
+    // One candle: the clearing pass has nothing to erase, so every dollar it seeds survives.
+    const only = candle(0, 100, 115, 90, 104, 5_000_000);
+    const map = buildHeatmap([only], [], '4h');
+
+    let total = 0;
+    for (const m of map.matrices) for (const v of m) total += v;
+    expect(total).toBeCloseTo(only.turnover, 0);
+  });
+
+  it('sums multiple untouched candles to their combined turnover', () => {
+    // Two dojis far enough apart that neither clears the other's levels.
+    const a = candle(0, 100, 100, 100, 100, 1_000_000);
+    const b = candle(1, 400, 400, 400, 400, 3_000_000);
+    const map = buildHeatmap([a, b], [], '4h');
+
+    let total = 0;
+    const offset = (map.nCols - 1) * map.grid.nBuckets;
+    for (const m of map.matrices) {
+      for (let i = offset; i < offset + map.grid.nBuckets; i++) total += m[i];
+    }
+    expect(total).toBeCloseTo(a.turnover + b.turnover, -2);
+  });
+
+  it('scales the whole grid with the OI factor', () => {
+    const only = [candle(0, 100, 100, 100, 100, 1_000_000), candle(1, 100, 100, 100, 100, 1_000_000)];
+    const flat = buildHeatmap(only, [], '4h');
+    const rising = buildHeatmap(
+      only,
+      [
+        { timestamp: 0, openInterest: 100 },
+        { timestamp: H, openInterest: 150 },
+      ],
+      '4h',
+    );
+    const sum = (m: typeof flat) => {
+      let t = 0;
+      for (const mat of m.matrices) for (const v of mat) t += v;
+      return t;
+    };
+    expect(sum(rising)).toBeGreaterThan(sum(flat));
+  });
+});
+
+describe('reseedLast', () => {
+  const history = [
+    candle(0, 100, 100, 100, 100, 1_000_000),
+    candle(1, 100, 101, 99, 100, 1_000_000),
+    candle(2, 100, 101, 99, 100, 1_000_000),
+  ];
+
+  it('reproduces a full rebuild when handed the same final candle', () => {
+    const map = buildHeatmap(history, [], '4h');
+    const same = reseedLast(map, history[2]);
+
+    const offset = (map.nCols - 1) * map.grid.nBuckets;
+    for (let t = 0; t < map.tiers.length; t++) {
+      for (let b = 0; b < map.grid.nBuckets; b++) {
+        expect(same.matrices[t][offset + b]).toBeCloseTo(map.matrices[t][offset + b], 3);
+      }
+    }
+  });
+
+  it('matches a rebuild when the forming candle has moved inside the existing range', () => {
+    const map = buildHeatmap(history, [], '4h');
+    // Stays within [99, 101], so the grid is identical and the two are comparable.
+    const moved = { ...history[2], close: 100.8 };
+
+    const incremental = reseedLast(map, moved);
+    const rebuilt = buildHeatmap([history[0], history[1], moved], [], '4h');
+
+    const offset = (map.nCols - 1) * map.grid.nBuckets;
+    for (let t = 0; t < map.tiers.length; t++) {
+      for (let b = 0; b < map.grid.nBuckets; b++) {
+        expect(incremental.matrices[t][offset + b]).toBeCloseTo(
+          rebuilt.matrices[t][offset + b],
+          3,
+        );
+      }
+    }
+  });
+
+  it('clears a level once the forming candle trades through it', () => {
+    const map = buildHeatmap(history, [], '4h');
+    const ti = map.tiers.indexOf(10);
+    const bucket = priceToBucket(map.grid, longLiqPrice(100, 10)); // 90
+    expect(valueAt(map, ti, 2, bucket)).toBeGreaterThan(0);
+
+    // The forming candle wicks down through 90. Close moves to 96 as well, otherwise its
+    // own close of 100 would re-seed a 10x long right back onto 90.
+    const swept = reseedLast(map, { ...history[2], low: 85, close: 96 });
+    expect(valueAt(swept, ti, 2, bucket)).toBe(0);
+  });
+
+  it('keeps the original grid when a forming candle breaks the price range', () => {
+    // Documented limitation: rebucketing every column is a full rebuild's job, so callers
+    // refetch on candle confirm rather than letting the axis silently shift mid-tick.
+    const map = buildHeatmap(history, [], '4h');
+    const breakout = reseedLast(map, { ...history[2], high: 400 });
+    expect(breakout.grid).toEqual(map.grid);
+  });
+
+  it('leaves earlier columns untouched', () => {
+    const map = buildHeatmap(history, [], '4h');
+    const swept = reseedLast(map, { ...history[2], low: 80, high: 120 });
+
+    for (let t = 0; t < map.tiers.length; t++) {
+      for (let col = 0; col < map.nCols - 1; col++) {
+        for (const b of [100, 400, 700, 1000]) {
+          expect(valueAt(swept, t, col, b)).toBe(valueAt(map, t, col, b));
+        }
+      }
+    }
+  });
+
+  it('returns a new object so React sees a change', () => {
+    const map = buildHeatmap(history, [], '4h');
+    expect(reseedLast(map, history[2])).not.toBe(map);
+  });
+
+  it('is a no-op on an empty map', () => {
+    const empty = buildHeatmap([], [], '4h');
+    expect(reseedLast(empty, history[0])).toBe(empty);
   });
 });
 

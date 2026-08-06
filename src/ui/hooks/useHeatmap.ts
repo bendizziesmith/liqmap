@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import type { HeatmapData, Interval } from '../../engine/types';
-import { buildHeatmap } from '../../engine/build';
+import { useEffect, useMemo, useState } from 'react';
+import type { Candle, HeatmapData, Interval } from '../../engine/types';
+import { buildHeatmap, reseedLast } from '../../engine/build';
 import { fetchKlines, fetchOpenInterest } from '../../data/rest';
 
 interface State {
@@ -15,6 +15,23 @@ interface State {
  * `nonce` lets the caller force a rebuild (the Refresh button) without changing symbol or
  * interval. Stale responses are dropped so fast symbol-switching cannot paint the wrong map.
  */
+/**
+ * Fold a still-forming candle into an already-built map.
+ *
+ * Only applies when the websocket candle is the one the map already ends on: a newer start
+ * means a candle closed, which the caller handles by refetching.
+ */
+export function useLiveHeatmap(state: State, forming: Candle | null): State {
+  const map = useMemo(() => {
+    const base = state.map;
+    if (!base || base.nCols === 0 || !forming) return base;
+    if (forming.start !== base.candles[base.nCols - 1].start) return base;
+    return reseedLast(base, forming);
+  }, [state.map, forming]);
+
+  return map === state.map ? state : { ...state, map };
+}
+
 export function useHeatmap(symbol: string, interval: Interval, nonce: number): State {
   const [state, setState] = useState<State>({ map: null, loading: true, error: null });
 

@@ -4,7 +4,10 @@ import { bucketToPrice, priceToBucket } from '../engine/grid';
 import { computeVmax, normalizeScore } from '../engine/normalize';
 import { alphaFor, inferno, TIER_COLORS } from '../engine/colormap';
 import { lastColumn } from '../engine/profile';
+import { buildPanelProfile } from '../engine/panelProfile';
+import { formatUsd, formatUsdPrecise } from '../engine/usd';
 import { priceToY, yToPrice } from './scale';
+import { axisZoomFactor, scaleAbout } from './axis';
 import { capturePointer, releasePointer } from './gesture';
 
 const AXIS_W = 62; // right-hand price gutter
@@ -17,6 +20,10 @@ const DEFAULT_COLS = 220;
  * the near-price structure that is actually tradeable. Zoom out to reach it.
  */
 const FIT_PAD = 0.15;
+
+/** Cumulative curve colours: longs below price, shorts above. Shared with the Map view. */
+export const LONG_COLOR = '#4ade80';
+export const SHORT_COLOR = '#f59e0b';
 
 interface View {
   c0: number;
@@ -33,34 +40,36 @@ interface Props {
   showProfile: boolean;
 }
 
+type Region = 'plot' | 'priceAxis' | 'timeAxis' | 'panel';
+
 interface Hover {
   x: number;
   y: number;
+  region: Region;
   price: number;
   col: number;
   scores: number[];
   time: number;
+  row: number;
+}
+
+function fitPrice(map: HeatmapData, c0: number, c1: number): [number, number] {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let i = Math.max(0, Math.floor(c0)); i < Math.min(map.nCols, Math.ceil(c1)); i++) {
+    if (map.candles[i].low < lo) lo = map.candles[i].low;
+    if (map.candles[i].high > hi) hi = map.candles[i].high;
+  }
+  if (!Number.isFinite(lo)) return [map.grid.min, map.grid.max];
+  const pad = (hi - lo) * FIT_PAD || hi * 0.05;
+  return [Math.max(map.grid.min, lo - pad), Math.min(map.grid.max, hi + pad)];
 }
 
 function fitView(map: HeatmapData): View {
   const c0 = Math.max(0, map.nCols - DEFAULT_COLS);
   const c1 = map.nCols;
-
-  let lo = Infinity;
-  let hi = -Infinity;
-  for (let i = c0; i < c1; i++) {
-    if (map.candles[i].low < lo) lo = map.candles[i].low;
-    if (map.candles[i].high > hi) hi = map.candles[i].high;
-  }
-  if (!Number.isFinite(lo)) return { c0, c1, p0: map.grid.min, p1: map.grid.max };
-
-  const pad = (hi - lo) * FIT_PAD || hi * 0.05;
-  return {
-    c0,
-    c1,
-    p0: Math.max(map.grid.min, lo - pad),
-    p1: Math.min(map.grid.max, hi + pad),
-  };
+  const [p0, p1] = fitPrice(map, c0, c1);
+  return { c0, c1, p0, p1 };
 }
 
 function formatPrice(p: number): string {
@@ -68,6 +77,20 @@ function formatPrice(p: number): string {
   if (p >= 1) return p.toFixed(2);
   if (p >= 0.01) return p.toFixed(4);
   return p.toFixed(6);
+}
+
+/**
+ * Decimal places for a "specific price" readout.
+ *
+ * Derived from magnitude rather than fetching each symbol's `instruments-info` tick size:
+ * it lands on the same precision for every symbol in scope and costs no extra request.
+ */
+function formatTickPrice(p: number): string {
+  if (p >= 10_000) return p.toFixed(1);
+  if (p >= 100) return p.toFixed(2);
+  if (p >= 1) return p.toFixed(4);
+  if (p >= 0.01) return p.toFixed(5);
+  return p.toFixed(7);
 }
 
 function formatTime(ms: number, interval: string): string {
@@ -86,13 +109,8 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
   const [view, setView] = useState<View | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const [cursor, setCursor] = useState('crosshair');
 
-  /**
-   * Sum of the enabled tiers, cached.
-   *
-   * The paint loop touches every visible pixel, so folding four matrix reads into one here
-   * — recomputed only when the map or the toggles change — is what keeps panning smooth.
-   */
   const combined = useMemo(() => {
     if (!map) return null;
     const out = new Float32Array(map.nCols * map.grid.nBuckets);
@@ -107,19 +125,11 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
   /** Active levels as of the latest candle — the same data the Map view profiles. */
   const active = useMemo(() => (map && map.nCols > 0 ? lastColumn(map) : null), [map]);
 
-  // Refit whenever a different dataset arrives.
   useEffect(() => {
     setView(map && map.nCols > 0 ? fitView(map) : null);
-  }, [map]);
+    // Refit only when a different symbol/interval arrives, not on every live re-seed.
+  }, [map?.grid.min, map?.grid.max, map?.nCols]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /**
-   * Track the element size so the canvas can match device pixels exactly.
-   *
-   * Three triggers, because ResizeObserver alone is not reliable enough: some environments
-   * deliver only one entry before the final layout pass and never fire again, which leaves
-   * the canvas permanently mis-sized. The rAF measure catches that, and the window listener
-   * covers orientation changes on the phone build.
-   */
   useEffect(() => {
     const measure = () => {
       const el = wrapRef.current;
@@ -132,7 +142,6 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
 
     measure();
     const raf = requestAnimationFrame(measure);
-
     const ro = new ResizeObserver(measure);
     if (wrapRef.current) ro.observe(wrapRef.current);
     window.addEventListener('resize', measure);
@@ -147,7 +156,6 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
   }, []);
 
   const profileW = showProfile ? PROFILE_W : 0;
-
   const plot = useMemo(
     () => ({
       w: Math.max(0, size.w - AXIS_W - profileW),
@@ -157,6 +165,30 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
   );
   const profileX = plot.w;
   const axisX = plot.w + profileW;
+
+  /** Per-screen-row profile: bar mass, cumulative curves and hot-pocket threshold. */
+  const panel = useMemo(() => {
+    if (!showProfile || !active || !map || !view || plot.h <= 0) return null;
+    return buildPanelProfile(
+      active,
+      enabledTiers,
+      map.grid,
+      view.p0,
+      view.p1,
+      plot.h,
+      livePrice,
+    );
+  }, [showProfile, active, map, view, plot.h, enabledTiers, livePrice]);
+
+  const regionAt = useCallback(
+    (mx: number, my: number): Region => {
+      if (my > plot.h) return 'timeAxis';
+      if (mx > axisX) return 'priceAxis';
+      if (showProfile && mx > profileX) return 'panel';
+      return 'plot';
+    },
+    [plot.h, axisX, profileX, showProfile],
+  );
 
   // ---- paint -------------------------------------------------------------
   useEffect(() => {
@@ -183,7 +215,6 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
 
     const vmax = computeVmax(map.matrices, enabledTiers, grid.nBuckets, c0, c1, b0, b1 + 1);
 
-    // Native-resolution raster, upscaled with smoothing off so buckets stay crisp squares.
     let raster = rasterRef.current;
     if (!raster) {
       raster = document.createElement('canvas');
@@ -202,7 +233,6 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
       for (let b = b0; b <= b1; b++) {
         const x = normalizeScore(combined[offset + b], vmax);
         const [r, g, bl] = inferno(x);
-        // Bucket 0 is the lowest price, but image row 0 is the top of the screen.
         const i = ((b1 - b) * cols + cx) * 4;
         px[i] = r;
         px[i + 1] = g;
@@ -212,11 +242,8 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
     }
     rctx.putImageData(img, 0, 0);
 
-    // Align the blit to the exact price/time window the raster covers.
     const topPrice = bucketToPrice(grid, b1) + grid.step / 2;
     const botPrice = bucketToPrice(grid, b0) - grid.step / 2;
-    const yTop = toY(topPrice);
-    const yBot = toY(botPrice);
     const colW = plot.w / (view.c1 - view.c0);
     const xLeft = (c0 - view.c0) * colW;
 
@@ -226,7 +253,7 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
     ctx.clip();
 
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(raster, xLeft, yTop, cols * colW, yBot - yTop);
+    ctx.drawImage(raster, xLeft, toY(topPrice), cols * colW, toY(botPrice) - toY(topPrice));
 
     // ---- candles ----
     const bodyW = Math.max(1, Math.min(colW * 0.62, 14));
@@ -248,61 +275,92 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
       if (colW >= 3) {
         const yO = toY(k.open);
         const yC = toY(k.close);
-        const top = Math.min(yO, yC);
-        const h = Math.max(1, Math.abs(yC - yO));
-        ctx.fillRect(cx - bodyW / 2, top, bodyW, h);
-        ctx.strokeRect(cx - bodyW / 2, top, bodyW, h);
+        ctx.fillRect(cx - bodyW / 2, Math.min(yO, yC), bodyW, Math.max(1, Math.abs(yC - yO)));
+        ctx.strokeRect(cx - bodyW / 2, Math.min(yO, yC), bodyW, Math.max(1, Math.abs(yC - yO)));
       }
     }
     ctx.restore();
 
     // ---- side profile ----
-    // Bars are accumulated per screen row through the same `toY` the heat and candles use,
-    // so a bar sits at exactly the height of the band it describes. That is the alignment
-    // guarantee: there is one transform here, not two that must be kept in agreement.
-    if (showProfile && active) {
-      const nRows = Math.max(1, Math.ceil(plot.h));
-      const nTiers = active.length;
-      const acc = Array.from({ length: nTiers }, () => new Float32Array(nRows));
-
-      for (let b = b0; b <= b1; b++) {
-        const row = Math.floor(toY(bucketToPrice(grid, b)));
-        if (row < 0 || row >= nRows) continue;
-        for (let t = 0; t < nTiers; t++) {
-          if (enabledTiers[t]) acc[t][row] += active[t][b];
-        }
-      }
-
-      let rowMax = 0;
-      for (let r = 0; r < nRows; r++) {
-        let sum = 0;
-        for (let t = 0; t < nTiers; t++) sum += acc[t][r];
-        if (sum > rowMax) rowMax = sum;
-      }
+    // Bars anchor at the price axis and grow leftward into the chart, so their tips point
+    // at the levels rather than away from them.
+    if (showProfile && panel) {
+      const usable = profileW - 4;
 
       ctx.fillStyle = 'rgba(13,15,22,0.55)';
       ctx.fillRect(profileX, 0, profileW, plot.h);
 
-      if (rowMax > 0) {
-        const usable = profileW - 4;
-        for (let r = 0; r < nRows; r++) {
-          let sum = 0;
-          for (let t = 0; t < nTiers; t++) sum += acc[t][r];
-          if (sum <= 0) continue;
+      if (panel.rowMax > 0) {
+        for (let r = 0; r < panel.rows.length && r < plot.h; r++) {
+          const row = panel.rows[r];
+          if (row.total <= 0) continue;
 
-          // Same 0.68 gamma the heat colours use. Without it the unswept shelf at the grid
-          // edge owns the whole scale and every level near price renders as a hairline.
-          const rowW = normalizeScore(sum, rowMax) * usable;
+          // Same 0.68 gamma as the heat colours; without it the unswept shelf at the grid
+          // edge owns the scale and everything near price is a hairline.
+          const barW = normalizeScore(row.total, panel.rowMax) * usable;
+          const hot = row.total >= panel.hotThreshold && panel.hotThreshold > 0;
 
-          let x = profileX;
-          for (let t = 0; t < nTiers; t++) {
-            const v = acc[t][r];
+          let x = axisX;
+          for (let t = 0; t < row.tiers.length; t++) {
+            const v = row.tiers[t];
             if (v <= 0) continue;
-            const w = (v / sum) * rowW;
-            ctx.fillStyle = TIER_COLORS[t] ?? TIER_COLORS[TIER_COLORS.length - 1];
-            ctx.fillRect(x, r, w, 1);
-            x += w;
+            const w = (v / row.total) * barW;
+            ctx.fillStyle = hot ? '#f59e0b' : (TIER_COLORS[t] ?? TIER_COLORS[TIER_COLORS.length - 1]);
+            ctx.fillRect(x - w, r, w, 1);
+            x -= w;
           }
+        }
+      }
+
+      // ---- cumulative curves along the panel ----
+      const rows = panel.rows;
+      const maxCum = panel.maxCum;
+      if (maxCum > 0) {
+        const cumX = (v: number) => axisX - (v / maxCum) * usable;
+
+        const curve = (
+          from: number,
+          to: number,
+          pick: (r: (typeof rows)[number]) => number,
+          stroke: string,
+          fill: string,
+        ) => {
+          const step = from < to ? 1 : -1;
+          ctx.beginPath();
+          ctx.moveTo(axisX, from);
+          for (let r = from; step > 0 ? r <= to : r >= to; r += step) {
+            const row = rows[r];
+            if (!row) continue;
+            ctx.lineTo(cumX(pick(row)), r);
+          }
+          ctx.lineTo(axisX, to);
+          ctx.closePath();
+          ctx.fillStyle = fill;
+          ctx.fill();
+
+          ctx.beginPath();
+          let started = false;
+          for (let r = from; step > 0 ? r <= to : r >= to; r += step) {
+            const row = rows[r];
+            if (!row) continue;
+            const x = cumX(pick(row));
+            if (started) ctx.lineTo(x, r);
+            else {
+              ctx.moveTo(x, r);
+              started = true;
+            }
+          }
+          ctx.strokeStyle = stroke;
+          ctx.lineWidth = 1.25;
+          ctx.stroke();
+        };
+
+        const lastRow = Math.min(rows.length - 1, Math.floor(plot.h) - 1);
+        if (panel.priceRow > 0) {
+          curve(panel.priceRow - 1, 0, (r) => r.cumShort, SHORT_COLOR, 'rgba(245,158,11,0.10)');
+        }
+        if (panel.priceRow < lastRow) {
+          curve(panel.priceRow + 1, lastRow, (r) => r.cumLong, LONG_COLOR, 'rgba(74,222,128,0.10)');
         }
       }
 
@@ -335,7 +393,6 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
     }
 
     // ---- price axis ----
-    ctx.fillStyle = 'rgba(148,163,184,0.9)';
     ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
     ctx.textBaseline = 'middle';
     const ticks = Math.max(2, Math.min(10, Math.floor(plot.h / 46)));
@@ -367,38 +424,28 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
     }
 
     // ---- crosshair ----
-    if (hover) {
+    if (hover && hover.region !== 'timeAxis') {
       ctx.save();
       ctx.setLineDash([3, 3]);
       ctx.strokeStyle = 'rgba(245,158,11,0.75)';
       ctx.beginPath();
-      ctx.moveTo(hover.x + 0.5, 0);
-      ctx.lineTo(hover.x + 0.5, plot.h);
+      if (hover.region === 'plot') {
+        ctx.moveTo(hover.x + 0.5, 0);
+        ctx.lineTo(hover.x + 0.5, plot.h);
+      }
       ctx.moveTo(0, hover.y + 0.5);
       ctx.lineTo(axisX, hover.y + 0.5);
       ctx.stroke();
       ctx.restore();
     }
   }, [
-    map,
-    view,
-    combined,
-    active,
-    enabledTiers,
-    livePrice,
-    size,
-    plot,
-    hover,
-    interval,
-    showProfile,
-    profileW,
-    profileX,
-    axisX,
+    map, view, combined, active, panel, enabledTiers, livePrice, size, plot, hover,
+    interval, showProfile, profileW, profileX, axisX,
   ]);
 
   // ---- interaction -------------------------------------------------------
   const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const dragRef = useRef<{ x: number; y: number; view: View } | null>(null);
+  const dragRef = useRef<{ x: number; y: number; view: View; region: Region } | null>(null);
   const pinchRef = useRef<{ dx: number; dy: number; view: View } | null>(null);
 
   const onWheel = useCallback(
@@ -407,32 +454,35 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
       const rect = canvasRef.current!.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
+      const region = regionAt(mx, my);
       const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15;
 
       setView((v) => {
         if (!v) return v;
-        // Modifier zooms price; the bare wheel zooms time, which is the common case.
-        if (e.shiftKey || e.ctrlKey || e.metaKey) {
-          const anchor = yToPrice(my, v.p0, v.p1, plot.h);
-          return { ...v, p0: anchor - (anchor - v.p0) * factor, p1: anchor + (v.p1 - anchor) * factor };
+        // Over an axis the wheel zooms that axis alone; over the plot it keeps the old
+        // behaviour of time-zoom, with a modifier for price.
+        const priceOnly = region === 'priceAxis' || e.shiftKey || e.ctrlKey || e.metaKey;
+        if (priceOnly) {
+          const anchor = region === 'priceAxis' ? 0.5 : 1 - my / plot.h;
+          const [p0, p1] = scaleAbout([v.p0, v.p1], factor, anchor);
+          return { ...v, p0, p1 };
         }
-        const anchorCol = v.c0 + (mx / plot.w) * (v.c1 - v.c0);
-        let c0 = anchorCol - (anchorCol - v.c0) * factor;
-        let c1 = anchorCol + (v.c1 - anchorCol) * factor;
+        const anchor = region === 'timeAxis' ? 0.5 : mx / plot.w;
+        const [c0, c1] = scaleAbout([v.c0, v.c1], factor, anchor);
         if (c1 - c0 < 8) return v;
-        c0 = Math.max(-map.nCols * 0.1, c0);
-        c1 = Math.min(map.nCols * 1.1, c1);
-        return { ...v, c0, c1 };
+        return { ...v, c0: Math.max(-map.nCols * 0.1, c0), c1: Math.min(map.nCols * 1.1, c1) };
       });
     },
-    [view, map, plot.w, plot.h],
+    [view, map, plot.w, plot.h, regionAt],
   );
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       if (!view) return;
       const rect = canvasRef.current!.getBoundingClientRect();
-      pointers.current.set(e.pointerId, { x: e.clientX - rect.left, y: e.clientY - rect.top });
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      pointers.current.set(e.pointerId, { x: mx, y: my });
       capturePointer(canvasRef.current, e.pointerId);
 
       if (pointers.current.size === 2) {
@@ -444,10 +494,10 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
         };
         dragRef.current = null;
       } else {
-        dragRef.current = { x: e.clientX, y: e.clientY, view };
+        dragRef.current = { x: e.clientX, y: e.clientY, view, region: regionAt(mx, my) };
       }
     },
-    [view],
+    [view, regionAt],
   );
 
   const onPointerMove = useCallback(
@@ -462,29 +512,42 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
         pointers.current.set(e.pointerId, { x: mx, y: my });
       }
 
-      // Two fingers: independent time and price scaling.
       if (pointers.current.size === 2 && pinchRef.current) {
         const [a, b] = [...pointers.current.values()];
         const start = pinchRef.current;
         const sx = start.dx / Math.max(1, Math.abs(a.x - b.x));
         const sy = start.dy / Math.max(1, Math.abs(a.y - b.y));
-        const midCol = (start.view.c0 + start.view.c1) / 2;
-        const midPrice = (start.view.p0 + start.view.p1) / 2;
-        const halfC = ((start.view.c1 - start.view.c0) / 2) * sx;
-        const halfP = ((start.view.p1 - start.view.p0) / 2) * sy;
-        if (halfC > 4) {
-          setView({
-            c0: midCol - halfC,
-            c1: midCol + halfC,
-            p0: midPrice - halfP,
-            p1: midPrice + halfP,
-          });
-        }
+        const [c0, c1] = scaleAbout([start.view.c0, start.view.c1], sx, 0.5);
+        const [p0, p1] = scaleAbout([start.view.p0, start.view.p1], sy, 0.5);
+        if (c1 - c0 > 8) setView({ c0, c1, p0, p1 });
         return;
       }
 
-      if (dragRef.current) {
-        const d = dragRef.current;
+      const d = dragRef.current;
+      if (d) {
+        // Dragging an axis zooms it about its centre. Up zooms in on price, matching
+        // TradingView; left/right does the same for time.
+        if (d.region === 'priceAxis') {
+          const [p0, p1] = scaleAbout(
+            [d.view.p0, d.view.p1],
+            axisZoomFactor(e.clientY - d.y),
+            0.5,
+          );
+          setView({ ...d.view, p0, p1 });
+          setHover(null);
+          return;
+        }
+        if (d.region === 'timeAxis') {
+          const [c0, c1] = scaleAbout(
+            [d.view.c0, d.view.c1],
+            axisZoomFactor(d.x - e.clientX),
+            0.5,
+          );
+          if (c1 - c0 > 8) setView({ ...d.view, c0, c1 });
+          setHover(null);
+          return;
+        }
+
         const colW = plot.w / (d.view.c1 - d.view.c0);
         const dCols = (e.clientX - d.x) / colW;
         const dPrice = ((e.clientY - d.y) / plot.h) * (d.view.p1 - d.view.p0);
@@ -498,24 +561,34 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
         return;
       }
 
-      if (mx > plot.w || my > plot.h) {
+      const region = regionAt(mx, my);
+      setCursor(
+        region === 'priceAxis' ? 'ns-resize' : region === 'timeAxis' ? 'ew-resize' : 'crosshair',
+      );
+
+      if (region === 'timeAxis' || region === 'priceAxis') {
         setHover(null);
         return;
       }
 
-      const colW = plot.w / (view.c1 - view.c0);
-      const col = Math.floor(view.c0 + mx / colW);
-      if (col < 0 || col >= map.nCols) {
-        setHover(null);
-        return;
-      }
       const price = yToPrice(my, view.p0, view.p1, plot.h);
       const bucket = priceToBucket(map.grid, price);
+      const colW = plot.w / (view.c1 - view.c0);
+      const col = Math.max(0, Math.min(map.nCols - 1, Math.floor(view.c0 + mx / colW)));
       const scores = map.matrices.map((m) => m[col * map.grid.nBuckets + bucket]);
 
-      setHover({ x: mx, y: my, price, col, scores, time: map.candles[col].start });
+      setHover({
+        x: mx,
+        y: my,
+        region,
+        price,
+        col,
+        scores,
+        time: map.candles[col].start,
+        row: Math.max(0, Math.min(Math.floor(my), (panel?.rows.length ?? 1) - 1)),
+      });
     },
-    [map, view, plot],
+    [map, view, plot, regionAt, panel],
   );
 
   const endPointer = useCallback((e: React.PointerEvent) => {
@@ -525,11 +598,29 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
     if (pointers.current.size === 0) dragRef.current = null;
   }, []);
 
-  const refit = useCallback(() => {
-    if (map && map.nCols > 0) setView(fitView(map));
-  }, [map]);
+  const onDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (!map || map.nCols === 0) return;
+      const rect = canvasRef.current!.getBoundingClientRect();
+      const region = regionAt(e.clientX - rect.left, e.clientY - rect.top);
 
-  // React attaches wheel passively, which forbids preventDefault. Bind it directly.
+      setView((v) => {
+        if (!v) return fitView(map);
+        // Double-clicking an axis refits that axis alone; the plot refits both.
+        if (region === 'priceAxis') {
+          const [p0, p1] = fitPrice(map, v.c0, v.c1);
+          return { ...v, p0, p1 };
+        }
+        if (region === 'timeAxis') {
+          const full = fitView(map);
+          return { ...v, c0: full.c0, c1: full.c1 };
+        }
+        return fitView(map);
+      });
+    },
+    [map, regionAt],
+  );
+
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
@@ -539,36 +630,37 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
   }, []);
 
   const hoverTotal = hover ? hover.scores.reduce((a, s, i) => a + (enabledTiers[i] ? s : 0), 0) : 0;
+  const panelRow = hover && panel ? panel.rows[hover.row] : null;
 
   return (
     <div className="chart" ref={wrapRef}>
       <canvas
         ref={canvasRef}
         className="chart__canvas"
-        style={{ width: size.w, height: size.h }}
+        style={{ width: size.w, height: size.h, cursor }}
         onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endPointer}
         onPointerCancel={endPointer}
         onPointerLeave={() => setHover(null)}
-        onDoubleClick={refit}
+        onDoubleClick={onDoubleClick}
       />
 
       {!map && <div className="chart__empty">Loading market data…</div>}
       {map && map.nCols === 0 && <div className="chart__empty">No candles for this symbol.</div>}
 
-      {hover && map && (
+      {hover && map && hover.region === 'panel' && panelRow && (
         <div
           className="tip"
           style={{
-            left: Math.min(hover.x + 14, Math.max(0, plot.w - 190)),
-            top: Math.min(hover.y + 14, Math.max(0, plot.h - 150)),
+            left: Math.max(6, profileX - 210),
+            top: Math.min(hover.y + 12, Math.max(0, plot.h - 175)),
           }}
         >
           <div className="tip__row tip__row--head">
-            <span>{formatTime(hover.time, interval)}</span>
-            <strong>{formatPrice(hover.price)}</strong>
+            <span>price</span>
+            <strong>{formatTickPrice(panelRow.price)}</strong>
           </div>
           {map.tiers.map((t, i) => (
             <div className="tip__row" key={t} data-off={!enabledTiers[i]}>
@@ -576,18 +668,55 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
                 <i className="tip__swatch" style={{ background: TIER_COLORS[i] }} />
                 {t}×
               </span>
-              <span>{hover.scores[i] > 0 ? hover.scores[i].toFixed(2) : '—'}</span>
+              <span>{panelRow.tiers[i] > 0 ? formatUsdPrecise(panelRow.tiers[i]) : '—'}</span>
             </div>
           ))}
           <div className="tip__row tip__row--total">
-            <span>total</span>
-            <strong>{hoverTotal > 0 ? hoverTotal.toFixed(2) : '—'}</strong>
+            <span>total est.</span>
+            <strong>{panelRow.total > 0 ? formatUsdPrecise(panelRow.total) : '—'}</strong>
           </div>
-          <div className="tip__note">relative score, not USD</div>
+          <div className="tip__row">
+            <span style={{ color: LONG_COLOR }}>cum. longs</span>
+            <span>{panelRow.cumLong > 0 ? formatUsd(panelRow.cumLong) : '—'}</span>
+          </div>
+          <div className="tip__row">
+            <span style={{ color: SHORT_COLOR }}>cum. shorts</span>
+            <span>{panelRow.cumShort > 0 ? formatUsd(panelRow.cumShort) : '—'}</span>
+          </div>
+          <div className="tip__note">estimated USD, not exchange-reported</div>
         </div>
       )}
 
-      <button className="chart__refit" onClick={refit} type="button">
+      {hover && map && hover.region === 'plot' && (
+        <div
+          className="tip"
+          style={{
+            left: Math.min(hover.x + 14, Math.max(0, plot.w - 200)),
+            top: Math.min(hover.y + 14, Math.max(0, plot.h - 150)),
+          }}
+        >
+          <div className="tip__row tip__row--head">
+            <span>{formatTime(hover.time, interval)}</span>
+            <strong>{formatTickPrice(hover.price)}</strong>
+          </div>
+          {map.tiers.map((t, i) => (
+            <div className="tip__row" key={t} data-off={!enabledTiers[i]}>
+              <span>
+                <i className="tip__swatch" style={{ background: TIER_COLORS[i] }} />
+                {t}×
+              </span>
+              <span>{hover.scores[i] > 0 ? formatUsd(hover.scores[i]) : '—'}</span>
+            </div>
+          ))}
+          <div className="tip__row tip__row--total">
+            <span>total est.</span>
+            <strong>{hoverTotal > 0 ? formatUsdPrecise(hoverTotal) : '—'}</strong>
+          </div>
+          <div className="tip__note">estimated USD, not exchange-reported</div>
+        </div>
+      )}
+
+      <button className="chart__refit" onClick={() => map && setView(fitView(map))} type="button">
         Refit
       </button>
     </div>
