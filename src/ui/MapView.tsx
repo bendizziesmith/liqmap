@@ -74,9 +74,10 @@ export function MapView({ symbol, livePrice, nonce }: Props) {
       />
 
       <p className="map__help">
-        Bars are <strong>relative intensity</strong>, not contracts or USD. Taller means a
-        stronger expected reaction — price tends to be drawn toward these levels and to
-        accelerate through them. Below current price is long liquidations, above is shorts.
+        Bars are <strong>estimated USD notional</strong> at each level, modelled from candle
+        turnover — not exchange-reported positions. Taller means a stronger expected reaction:
+        price tends to be drawn toward these levels and to accelerate through them. Below
+        current price is long liquidations, above is shorts.
       </p>
     </div>
   );
