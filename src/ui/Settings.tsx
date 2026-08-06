@@ -114,6 +114,9 @@ export function Settings({ open, values, alerts, onChange, onClose }: Props) {
             derived from candles and open interest. They are not dollar amounts and not
             exchange-reported positions.
           </p>
+          <p className="note note--build">
+            build <code>{__BUILD_ID__}</code>
+          </p>
         </section>
       </aside>
     </>
