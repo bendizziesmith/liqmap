@@ -87,7 +87,7 @@ body {
 /* ── app frame ─────────────────────────────────────────────────────────── */
 .app {
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto 1fr auto auto;
   height: 100%;
   /* Respect the iOS notch now so the Capacitor wrap needs no layout changes. */
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
@@ -635,6 +635,22 @@ body {
   color: var(--up);
 }
 
+/* ── disclaimer ────────────────────────────────────────────────────────── */
+.disclaimer {
+  padding: 4px 12px calc(5px + env(safe-area-inset-bottom));
+  background: var(--bg);
+  border-top: 1px solid var(--line-soft);
+  color: var(--dim);
+  font-size: 10.5px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.disclaimer strong {
+  color: var(--muted);
+  font-weight: 600;
+}
+
 /* ── settings drawer ───────────────────────────────────────────────────── */
 .scrim {
   position: fixed;
@@ -884,6 +900,12 @@ body {
 
   .tape {
     display: none; /* the liquidation tape needs width it does not have here */
+  }
+
+  .disclaimer {
+    padding: 4px 9px calc(5px + env(safe-area-inset-bottom));
+    font-size: 9.5px;
+    text-align: left;
   }
 
   .drawer {

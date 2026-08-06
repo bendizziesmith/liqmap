@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+# Market data is fetched client-side straight from Bybit and is not served from this host,
+# so there is nothing here worth crawling beyond the app shell.
+Disallow: /assets/

@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LiquidationProfile, ProfileBin } from '../engine/profile';
 import { TIER_COLORS } from '../engine/colormap';
+import { pinchAnchor, pinchFactor, spreadX, zoomDomain, type Point } from './gesture';
 
 const AXIS_H = 20; // price labels under the plot
 const AXIS_W = 46; // cumulative labels on the right
 const BRUSH_H = 26; // mini overview strip
 const BRUSH_GAP = 6;
+/** Never zoom below this many bins — past it the bars are wider than they are informative. */
+const MIN_BINS = 6;
 
 interface Props {
   title: string;
@@ -38,6 +41,8 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
   /** Visible slice of the bin array: [i0, i1). Zoom and pan act on the price axis. */
   const [range, setRange] = useState<[number, number] | null>(null);
   const dragRef = useRef<{ x: number; range: [number, number] } | null>(null);
+  const pointers = useRef(new Map<number, Point>());
+  const pinchRef = useRef<{ spread: number; range: [number, number] } | null>(null);
 
   const nBins = profile?.bins.length ?? 0;
 
@@ -276,17 +281,11 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
       const mx = e.clientX - rect.left;
       const factor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
 
-      setRange((prev) => {
-        if (!prev) return prev;
-        const [i0, i1] = prev;
-        const anchor = i0 + (mx / Math.max(1, plot.w)) * (i1 - i0);
-        let n0 = anchor - (anchor - i0) * factor;
-        let n1 = anchor + (i1 - anchor) * factor;
-        if (n1 - n0 < 6) return prev;
-        n0 = Math.max(0, n0);
-        n1 = Math.min(nBins, n1);
-        return [Math.round(n0), Math.round(n1)];
-      });
+      setRange((prev) =>
+        prev
+          ? zoomDomain(prev, factor, mx / Math.max(1, plot.w), [0, nBins], MIN_BINS)
+          : prev,
+      );
     },
     [range, nBins, plot.w],
   );
@@ -294,8 +293,17 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       if (!range) return;
+      const rect = canvasRef.current!.getBoundingClientRect();
       canvasRef.current?.setPointerCapture(e.pointerId);
-      dragRef.current = { x: e.clientX, range };
+      pointers.current.set(e.pointerId, { x: e.clientX - rect.left, y: e.clientY - rect.top });
+
+      if (pointers.current.size === 2) {
+        const [a, b] = [...pointers.current.values()];
+        pinchRef.current = { spread: spreadX(a, b), range };
+        dragRef.current = null;
+      } else {
+        dragRef.current = { x: e.clientX, range };
+      }
     },
     [range],
   );
@@ -307,6 +315,27 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
+
+      if (pointers.current.has(e.pointerId)) {
+        pointers.current.set(e.pointerId, { x: mx, y: my });
+      }
+
+      // Two fingers pinch the price axis, matching the heatmap's touch gestures.
+      if (pointers.current.size === 2 && pinchRef.current) {
+        const [a, b] = [...pointers.current.values()];
+        const start = pinchRef.current;
+        setRange(
+          zoomDomain(
+            start.range,
+            pinchFactor(start.spread, spreadX(a, b)),
+            pinchAnchor(a, b, plot.w),
+            [0, nBins],
+            MIN_BINS,
+          ),
+        );
+        setHover(null);
+        return;
+      }
 
       if (dragRef.current) {
         const d = dragRef.current;
@@ -346,7 +375,9 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
 
   const endPointer = useCallback((e: React.PointerEvent) => {
     canvasRef.current?.releasePointerCapture?.(e.pointerId);
-    dragRef.current = null;
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2) pinchRef.current = null;
+    if (pointers.current.size === 0) dragRef.current = null;
   }, []);
 
   useEffect(() => {

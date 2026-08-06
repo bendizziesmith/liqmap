@@ -113,6 +113,12 @@ export default function App() {
         tape={tape}
       />
 
+      <footer className="disclaimer">
+        Liquidation levels are <strong>estimates</strong> derived from public market data —
+        exchanges do not publish per-position leverage. Scores are relative, not USD. Not
+        financial advice.
+      </footer>
+
       <Settings
         open={settingsOpen}
         values={settings}

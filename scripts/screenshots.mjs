@@ -14,7 +14,8 @@ import puppeteer from 'puppeteer-core';
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const BASE = process.argv[2] ?? 'http://localhost:5177/';
-const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'docs', 'screenshots');
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const OUT = join(ROOT, 'docs', 'screenshots');
 
 const DESKTOP = { width: 1440, height: 900, dsf: 1 };
 const PHONE = { width: 390, height: 844, dsf: 2, mobile: true };
@@ -24,6 +25,16 @@ const SHOTS = [
   { name: 'mobile.png', ...PHONE, view: { symbol: 'BTCUSDT', tab: 'heatmap', showProfile: true } },
   { name: 'map-desktop.png', ...DESKTOP, view: { symbol: 'XRPUSDT', tab: 'map', showProfile: true } },
   { name: 'map-mobile.png', ...PHONE, view: { symbol: 'XRPUSDT', tab: 'map', showProfile: true } },
+  // Social card: the real product at the 1.91:1 ratio scrapers expect. Written into
+  // public/ so the build copies it to the site root.
+  {
+    name: 'og.png',
+    width: 1200,
+    height: 630,
+    dsf: 1,
+    dir: 'public',
+    view: { symbol: 'BTCUSDT', tab: 'heatmap', showProfile: true },
+  },
 ];
 
 const BASE_VIEW = {
@@ -82,8 +93,9 @@ for (const shot of SHOTS) {
   );
   if (overflow) console.warn(`${shot.name}: horizontal overflow detected`);
 
-  await page.screenshot({ path: join(OUT, shot.name) });
-  console.log(`wrote ${shot.name} (${shot.width}x${shot.height})`);
+  const dest = shot.dir ? join(ROOT, shot.dir, shot.name) : join(OUT, shot.name);
+  await page.screenshot({ path: dest });
+  console.log(`wrote ${shot.dir ?? 'docs/screenshots'}/${shot.name} (${shot.width}x${shot.height})`);
   await page.close();
 }
 
