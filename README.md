@@ -1,5 +1,7 @@
 # LiqMap
 
+**Live: [liqmap.netlify.app](https://liqmap.netlify.app)**
+
 A crypto liquidation heatmap that runs entirely in your browser. It pulls public Bybit v5
 market data, computes where leveraged positions would be liquidated, and paints the result
 as a time × price heatmap. No API key, no backend, no account.
@@ -145,6 +147,22 @@ and no Node runtime requirements, so it can be wrapped with Capacitor as-is. Lay
 honours `env(safe-area-inset-*)` and works down to 360px.
 
 ![Mobile](docs/screenshots/mobile.png)
+
+## Deploying
+
+Netlify builds `npm run build` and publishes `dist/`. Pushes to `main` auto-deploy via a
+GitHub webhook into a Netlify build hook.
+
+`netlify.toml` carries the header policy that matters:
+
+| Path | Cache-Control | Why |
+|---|---|---|
+| `/assets/*` | `immutable`, 1 year | Vite fingerprints the filenames, so changed content is always a changed URL |
+| `/sw.js` | `must-revalidate` | A cached service worker keeps serving its old precached shell — users get pinned to a build you already replaced |
+| `/index.html`, `/` | `must-revalidate` | It points at the fingerprinted bundles, so a stale copy pins the whole app |
+
+The build id shown in Settings comes from Netlify's `COMMIT_REF`, so you can always tell
+which build a browser is actually running.
 
 ## Caveats
 

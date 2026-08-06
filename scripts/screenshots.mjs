@@ -47,13 +47,19 @@ const BASE_VIEW = {
 
 mkdirSync(OUT, { recursive: true });
 
+// The social card is a build input, not documentation. Regenerating it from a deployed URL
+// would dirty the tree and require another deploy to publish the change, so only rebuild it
+// when shooting against a local dev server.
+const isLocal = /localhost|127\.0\.0\.1/.test(BASE);
+const shots = SHOTS.filter((s) => s.dir !== 'public' || isLocal);
+
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: true,
   args: ['--no-sandbox', '--disable-gpu'],
 });
 
-for (const shot of SHOTS) {
+for (const shot of shots) {
   const page = await browser.newPage();
   await page.setViewport({
     width: shot.width,
