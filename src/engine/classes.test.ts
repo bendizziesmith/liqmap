@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   CLASS_PERCENTILES,
   N_CLASSES,
+  NOISE_FLOOR_FRACTION,
+  aboveNoiseFloor,
   classBreaks,
   classOf,
   classAlpha,
@@ -154,5 +156,43 @@ describe('colormaps', () => {
         }
       }
     }
+  });
+});
+
+describe('the noise floor', () => {
+  const breaks = [100, 200, 300, 400];
+
+  it('hides values in the bottom quarter of the faintest class', () => {
+    expect(aboveNoiseFloor(24, breaks)).toBe(false);
+    expect(aboveNoiseFloor(26, breaks)).toBe(true);
+  });
+
+  it('puts the cut at a quarter of the first break', () => {
+    expect(NOISE_FLOOR_FRACTION).toBe(0.25);
+    expect(aboveNoiseFloor(breaks[0] * NOISE_FLOOR_FRACTION, breaks)).toBe(true);
+    expect(aboveNoiseFloor(breaks[0] * NOISE_FLOOR_FRACTION - 1e-9, breaks)).toBe(false);
+  });
+
+  it('never hides anything that would have reached a real class', () => {
+    for (const v of [100, 150, 200, 350, 400, 10_000]) {
+      expect(aboveNoiseFloor(v, breaks)).toBe(true);
+    }
+  });
+
+  it('treats zero and negatives as nothing to paint', () => {
+    expect(aboveNoiseFloor(0, breaks)).toBe(false);
+    expect(aboveNoiseFloor(-5, breaks)).toBe(false);
+  });
+
+  it('paints everything non-zero when the breaks have collapsed to zero', () => {
+    // An almost-empty window gives every percentile 0; a floor of 0 must not blank it.
+    expect(aboveNoiseFloor(1e-9, [0, 0, 0, 0])).toBe(true);
+    expect(aboveNoiseFloor(0, [0, 0, 0, 0])).toBe(false);
+  });
+
+  it('scales with the data, so a quiet window is not wiped out', () => {
+    const quiet = [1e-3, 2e-3, 3e-3, 4e-3];
+    expect(aboveNoiseFloor(5e-4, quiet)).toBe(true);
+    expect(aboveNoiseFloor(1e-5, quiet)).toBe(false);
   });
 });

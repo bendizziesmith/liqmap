@@ -19,6 +19,13 @@ export interface Settings {
    * clearing-only behaviour, for comparison.
    */
   levelDecay: boolean;
+  /**
+   * Soften band edges when the heat is upscaled, and the side panel's bars with them.
+   *
+   * On by default: the raster is a few hundred rows blown up to fill the plot, so hard
+   * bucket edges read as deliberate structure the data does not actually have.
+   */
+  smoothRendering: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -26,6 +33,7 @@ export const DEFAULT_SETTINGS: Settings = {
   alertDistancePct: 1.5,
   alertsEnabled: false,
   levelDecay: true,
+  smoothRendering: true,
 };
 
 export type Tab = 'heatmap' | 'map';

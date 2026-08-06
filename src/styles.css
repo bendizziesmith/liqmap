@@ -974,9 +974,19 @@ body {
 }
 
 .legend__title {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   color: var(--muted);
   letter-spacing: 0.04em;
   padding-top: 1px;
+}
+
+/* The faintest sliver of class 0 is not painted at all, so say so rather than leaving the
+   impression that the clean background means "no levels here". */
+.legend__floor {
+  font-style: normal;
+  opacity: 0.62;
 }
 
 /* One row per side of the book: the two halves are ranked on their own scales, so a single

@@ -150,6 +150,7 @@ export default function App() {
             onNeedOlder={loadOlder}
             loadingOlder={loadingOlder}
             prependedCount={prependedCount}
+            smooth={settings.smoothRendering}
           />
         ) : (
           <MapView

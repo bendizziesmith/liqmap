@@ -83,6 +83,19 @@ export function Settings({
             ages them out by leverage (100× lasts hours, 3× lasts months). Turn it off to see
             the raw clearing-only book.
           </span>
+
+          <label className="field field--row">
+            <input
+              type="checkbox"
+              checked={values.smoothRendering}
+              onChange={(e) => onChange({ smoothRendering: e.target.checked })}
+            />
+            <span>Smooth rendering</span>
+          </label>
+          <span className="field__hint">
+            Softens band edges where the heat is scaled up, and the side panel's bars with
+            them. Off draws crisp blocky buckets. Display only — no figure changes either way.
+          </span>
         </section>
 
         <section className="drawer__section">

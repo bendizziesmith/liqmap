@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { HeatmapData, Interval } from '../engine/types';
 import { bucketToPrice, priceToBucket } from '../engine/grid';
 import { normalizeScore } from '../engine/normalize';
-import { COLORMAPS, classAlpha, classBreaks, classOf, type ColormapId } from '../engine/classes';
+import { COLORMAPS, aboveNoiseFloor, classAlpha, classBreaks, classOf, type ColormapId } from '../engine/classes';
 import { lastColumn } from '../engine/profile';
 import { needsOlder } from '../engine/history';
 import { buildPanelProfile } from '../engine/panelProfile';
+import { displayRows, rowOfBucket, smoothSeries } from '../engine/rows';
 import { formatUsd, formatUsdPrecise } from '../engine/usd';
 import type { UsdScales } from '../engine/calibrate';
 import type { PriceFormatter } from './hooks/usePriceFormat';
@@ -60,6 +61,8 @@ interface Props {
   onNeedOlder: () => void;
   loadingOlder: boolean;
   prependedCount: number;
+  /** Soften band edges on upscale, and the panel's bar lengths with them. */
+  smooth: boolean;
 }
 
 type Region = 'plot' | 'priceAxis' | 'timeAxis' | 'panel';
@@ -116,10 +119,18 @@ export function HeatmapCanvas({
   onNeedOlder,
   loadingOlder,
   prependedCount,
+  smooth,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const rasterRef = useRef<HTMLCanvasElement | null>(null);
+  /**
+   * Scratch buffer for the aggregated rows, reused across paints.
+   *
+   * Allocating rows x cols of Float64 on every frame would churn tens of megabytes during a
+   * drag, which this renderer has been bitten by before.
+   */
+  const aggRef = useRef<Float64Array | null>(null);
   const [view, setView] = useState<View | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -231,7 +242,23 @@ export function HeatmapCanvas({
   const profileX = plot.w;
   const axisX = plot.w + profileW;
 
-  /** Per-screen-row profile: bar mass, cumulative curves and hot-pocket threshold. */
+  /**
+   * The display-row grid, shared by the heat raster and the side panel.
+   *
+   * Both have to agree: a bar that is 1px tall next to a band that is 4px tall reads as two
+   * unrelated drawings of the same thing.
+   */
+  const rasterRows = useMemo(() => {
+    if (!map || !view || plot.h <= 0) return 1;
+    const b0 = priceToBucket(map.grid, view.p0);
+    const b1 = priceToBucket(map.grid, view.p1);
+    return displayRows(b1 - b0 + 1, plot.h);
+  }, [map, view, plot.h]);
+
+  /** Height of one display row in CSS pixels. */
+  const rowH = plot.h > 0 ? plot.h / rasterRows : 1;
+
+  /** Per-display-row profile: bar mass, cumulative curves and hot-pocket threshold. */
   const panel = useMemo(() => {
     if (!showProfile || !active || !map || !view || plot.h <= 0) return null;
     return buildPanelProfile(
@@ -240,10 +267,10 @@ export function HeatmapCanvas({
       map.grid,
       view.p0,
       view.p1,
-      plot.h,
+      rasterRows,
       livePrice,
     );
-  }, [showProfile, active, map, view, plot.h, enabledTiers, livePrice]);
+  }, [showProfile, active, map, view, plot.h, rasterRows, enabledTiers, livePrice]);
 
   const regionAt = useCallback(
     (mx: number, my: number): Region => {
@@ -276,7 +303,6 @@ export function HeatmapCanvas({
     const b0 = priceToBucket(grid, view.p0);
     const b1 = priceToBucket(grid, view.p1);
     const cols = Math.max(1, c1 - c0);
-    const rows = Math.max(1, b1 - b0 + 1);
 
     // Class breaks from the visible window, so zooming into a quiet region reveals its
     // structure rather than flattening it all into the faintest class.
@@ -305,16 +331,44 @@ export function HeatmapCanvas({
      */
     const priceBucket = livePrice != null && livePrice > 0 ? priceToBucket(grid, livePrice) : -1;
 
+    /*
+     * Aggregate buckets into display rows before doing anything else.
+     *
+     * One source pixel per bucket meant the blit resampled: whenever the visible span
+     * exceeded the plot height, nearest-neighbour sampling kept one bucket per output row
+     * and threw the rest away, so bands flickered as you zoomed and what survived read as
+     * aliasing debris. Each row now takes the SUM of the buckets it owns — every bucket
+     * belongs to exactly one row, so the visible mass is conserved exactly and the
+     * percentile ladder still describes what is painted. Zoom in and rows collapse back to
+     * one bucket each, restoring the old 1:1 rendering on its own.
+     */
+    const need = rasterRows * cols;
+    if (!aggRef.current || aggRef.current.length < need) aggRef.current = new Float64Array(need);
+    const agg = aggRef.current;
+    agg.fill(0, 0, need);
+
+    for (let c = c0; c < c1; c++) {
+      const cx = c - c0;
+      for (let b = b0; b <= b1; b++) {
+        const v = valueAtCell(c, b);
+        if (v > 0) agg[rowOfBucket(b, b0, b1, rasterRows) * cols + cx] += v;
+      }
+    }
+
+    /** Bucket at the middle of a display row, which decides the side it is judged on. */
+    const centreBucket = (r: number) => b1 - Math.floor(((r + 0.5) * (b1 - b0 + 1)) / rasterRows);
+
     const visible: number[] = [];
     const above: number[] = [];
     const below: number[] = [];
-    for (let c = c0; c < c1; c++) {
-      for (let b = b0; b <= b1; b++) {
-        const v = valueAtCell(c, b);
+    for (let r = 0; r < rasterRows; r++) {
+      const side = centreBucket(r);
+      for (let cx = 0; cx < cols; cx++) {
+        const v = agg[r * cols + cx];
         if (v <= 0) continue;
         visible.push(v);
-        if (b > priceBucket) above.push(v);
-        else if (b < priceBucket) below.push(v);
+        if (side > priceBucket) above.push(v);
+        else if (side < priceBucket) below.push(v);
       }
     }
 
@@ -339,25 +393,27 @@ export function HeatmapCanvas({
       rasterRef.current = raster;
     }
     raster.width = cols;
-    raster.height = rows;
+    raster.height = rasterRows;
     const rctx = raster.getContext('2d');
     if (!rctx) return;
 
-    const img = rctx.createImageData(cols, rows);
+    const img = rctx.createImageData(cols, rasterRows);
     const px = img.data;
-    for (let c = c0; c < c1; c++) {
-      const cx = c - c0;
-      for (let b = b0; b <= b1; b++) {
-        const cls = classOf(valueAtCell(c, b), b > priceBucket ? breaksAbove : breaksBelow);
-        const i = ((b1 - b) * cols + cx) * 4;
-        if (cls < 0) {
+    for (let r = 0; r < rasterRows; r++) {
+      const breaks = centreBucket(r) > priceBucket ? breaksAbove : breaksBelow;
+      for (let cx = 0; cx < cols; cx++) {
+        const v = agg[r * cols + cx];
+        const i = (r * cols + cx) * 4;
+        // Below the floor is left fully transparent rather than painted as dim speckle.
+        if (!aboveNoiseFloor(v, breaks)) {
           px[i + 3] = 0;
           continue;
         }
-        const [r, g, bl] = ramp.classColors[cls];
-        px[i] = r;
-        px[i + 1] = g;
-        px[i + 2] = bl;
+        const cls = classOf(v, breaks);
+        const [cr, cg, cb] = ramp.classColors[cls];
+        px[i] = cr;
+        px[i + 1] = cg;
+        px[i + 2] = cb;
         px[i + 3] = classAlpha(cls);
       }
     }
@@ -373,7 +429,10 @@ export function HeatmapCanvas({
     ctx.rect(0, 0, plot.w, plot.h);
     ctx.clip();
 
-    ctx.imageSmoothingEnabled = false;
+    // Smoothing only bites on upscale, which is exactly where hard bucket edges look like
+    // deliberate structure that is not in the data.
+    ctx.imageSmoothingEnabled = smooth;
+    ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(raster, xLeft, toY(topPrice), cols * colW, toY(botPrice) - toY(topPrice));
 
     // ---- candles ----
@@ -412,18 +471,27 @@ export function HeatmapCanvas({
       ctx.fillRect(profileX, 0, profileW, plot.h);
 
       if (panel.rowMax > 0) {
-        for (let r = 0; r < panel.rows.length && r < plot.h; r++) {
+        // Bar LENGTHS are smoothed, not the row data: the tooltip has to keep reporting the
+        // levels that are actually there.
+        const lengths = smoothSeries(panel.rows.map((r) => r.total), smooth);
+        const lengthMax = Math.max(panel.rowMax, ...lengths);
+
+        for (let r = 0; r < panel.rows.length; r++) {
           const row = panel.rows[r];
           if (row.total <= 0) continue;
 
           // Same 0.68 gamma as the heat colours; without it the unswept shelf at the grid
           // edge owns the scale and everything near price is a hairline.
-          const barW = normalizeScore(row.total, panel.rowMax) * usable;
+          const barW = normalizeScore(lengths[r], lengthMax) * usable;
           // Rows above the price row are higher prices, so they are judged on the short
           // side's scale — the same split the raster uses.
           const hot =
             classOf(row.total, r < panel.priceRow ? breaksAbove : breaksBelow) ===
             COLORMAPS.inferno.classColors.length - 1;
+
+          // A bar is exactly as tall as the band it describes, so the two line up.
+          const y = r * rowH;
+          const h = Math.max(1, rowH);
 
           let x = axisX;
           for (let t = 0; t < row.tiers.length; t++) {
@@ -431,7 +499,7 @@ export function HeatmapCanvas({
             if (v <= 0) continue;
             const w = (v / row.total) * barW;
             ctx.fillStyle = hot ? ramp.hot : ramp.tierColors[t] ?? ramp.tierColors[ramp.tierColors.length - 1];
-            ctx.fillRect(x - w, r, w, 1);
+            ctx.fillRect(x - w, y, w, h);
             x -= w;
           }
         }
@@ -443,6 +511,9 @@ export function HeatmapCanvas({
       if (maxCum > 0) {
         const cumX = (v: number) => axisX - (v / maxCum) * usable;
 
+        // Rows are display rows, not pixels, so every y here goes through the row grid.
+        const yOfRow = (r: number) => (r + 0.5) * rowH;
+
         const curve = (
           from: number,
           to: number,
@@ -452,13 +523,13 @@ export function HeatmapCanvas({
         ) => {
           const step = from < to ? 1 : -1;
           ctx.beginPath();
-          ctx.moveTo(axisX, from);
+          ctx.moveTo(axisX, yOfRow(from));
           for (let r = from; step > 0 ? r <= to : r >= to; r += step) {
             const row = rows[r];
             if (!row) continue;
-            ctx.lineTo(cumX(pick(row)), r);
+            ctx.lineTo(cumX(pick(row)), yOfRow(r));
           }
-          ctx.lineTo(axisX, to);
+          ctx.lineTo(axisX, yOfRow(to));
           ctx.closePath();
           ctx.fillStyle = fill;
           ctx.fill();
@@ -469,9 +540,10 @@ export function HeatmapCanvas({
             const row = rows[r];
             if (!row) continue;
             const x = cumX(pick(row));
-            if (started) ctx.lineTo(x, r);
+            const y = yOfRow(r);
+            if (started) ctx.lineTo(x, y);
             else {
-              ctx.moveTo(x, r);
+              ctx.moveTo(x, y);
               started = true;
             }
           }
@@ -480,7 +552,7 @@ export function HeatmapCanvas({
           ctx.stroke();
         };
 
-        const lastRow = Math.min(rows.length - 1, Math.floor(plot.h) - 1);
+        const lastRow = rows.length - 1;
         if (panel.priceRow > 0) {
           curve(panel.priceRow - 1, 0, (r) => r.cumShort, SHORT_COLOR, 'rgba(245,158,11,0.10)');
         }
@@ -603,7 +675,7 @@ export function HeatmapCanvas({
     }
   }, [
     map, view, active, panel, enabledTiers, livePrice, size, plot, hover,
-    interval, showProfile, profileW, profileX, axisX,
+    interval, showProfile, profileW, profileX, axisX, rasterRows, rowH, smooth,
   ]);
 
   // ---- interaction -------------------------------------------------------
@@ -750,10 +822,10 @@ export function HeatmapCanvas({
         col,
         scores,
         time: map.candles[col].start,
-        row: Math.max(0, Math.min(Math.floor(my), (panel?.rows.length ?? 1) - 1)),
+        row: Math.max(0, Math.min(Math.floor(my / rowH), (panel?.rows.length ?? 1) - 1)),
       });
     },
-    [map, view, plot, regionAt, panel],
+    [map, view, plot, regionAt, panel, rowH],
   );
 
   const endPointer = useCallback((e: React.PointerEvent) => {
@@ -894,7 +966,10 @@ export function HeatmapCanvas({
           and must not lean on colour alone — this also makes the class breaks checkable. */}
       {map && legend && (
         <div className="legend" aria-label="Intensity classes, estimated USD">
-          <span className="legend__title">est. $ / level</span>
+          <span className="legend__title">
+            est. $ / band
+            <em className="legend__floor">&lt; floor hidden</em>
+          </span>
           <div className="legend__rows">
             {([
               { key: 'above', mark: '\u25b2', name: 'shorts', breaks: legend.above, scale: usdScale.short },

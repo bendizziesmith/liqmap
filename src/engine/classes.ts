@@ -107,6 +107,32 @@ export function classOf(value: number, breaks: number[]): number {
   return Math.min(cls, N_CLASSES - 1);
 }
 
+/**
+ * Share of the faintest class below which a cell is not worth painting.
+ *
+ * The grid is mostly empty, and what is not empty has a very long thin tail: the kernel's
+ * shoulders, decayed remnants, single ticks of turnover. Painted at class 0 they cover the
+ * background in dim purple static that reads as noise and hides the levels that matter.
+ * Cutting the bottom quarter of class 0 leaves the ground clean without touching anything
+ * that would have reached a real class.
+ */
+export const NOISE_FLOOR_FRACTION = 0.25;
+
+/**
+ * Whether a value is worth painting at all.
+ *
+ * Relative to the class breaks rather than absolute, so a quiet window — where every value
+ * is small — keeps its structure instead of being blanked.
+ */
+export function aboveNoiseFloor(
+  value: number,
+  breaks: number[],
+  fraction = NOISE_FLOOR_FRACTION,
+): boolean {
+  if (!(value > 0)) return false;
+  return value >= (breaks[0] ?? 0) * fraction;
+}
+
 export function classAlpha(cls: number): number {
   if (cls < 0) return 0;
   return CLASS_ALPHA[Math.min(cls, N_CLASSES - 1)];
