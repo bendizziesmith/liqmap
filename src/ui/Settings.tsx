@@ -67,6 +67,25 @@ export function Settings({
         </section>
 
         <section className="drawer__section">
+          <h3>Model</h3>
+
+          <label className="field field--row">
+            <input
+              type="checkbox"
+              checked={values.levelDecay}
+              onChange={(e) => onChange({ levelDecay: e.target.checked })}
+            />
+            <span>Level decay</span>
+          </label>
+          <span className="field__hint">
+            Levels only disappear when price trades through them — but most positions are
+            closed long before they are liquidated, so old untouched levels are ghosts. Decay
+            ages them out by leverage (100× lasts hours, 3× lasts months). Turn it off to see
+            the raw clearing-only book.
+          </span>
+        </section>
+
+        <section className="drawer__section">
           <h3>Proximity alerts</h3>
 
           <label className="field field--row">

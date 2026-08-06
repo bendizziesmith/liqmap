@@ -39,7 +39,7 @@ export default function App() {
   const narrow = useMedia('(max-width: 720px)');
   const profileVisible = showProfile && !narrow;
 
-  const fetched = useHeatmap(symbol, interval, nonce + closedNonce);
+  const fetched = useHeatmap(symbol, interval, nonce + closedNonce, settings.levelDecay);
   const { loadOlder, loadingOlder, prependedCount } = fetched;
 
   // A custom symbol joins the live feed and the watchlist strip alongside the presets.
@@ -67,7 +67,7 @@ export default function App() {
   useEffect(() => {
     if (candleClosed > 0) setClosedNonce((n) => n + 1);
   }, [candleClosed]);
-  const watchBands = useWatchlist(symbols, interval);
+  const watchBands = useWatchlist(symbols, interval, settings.levelDecay);
   const livePrice = prices[symbol] ?? map?.candles.at(-1)?.close ?? null;
 
   /** Bands of the focused symbol's latest column, honouring the tier toggles. */
@@ -159,6 +159,7 @@ export default function App() {
             formatPrice={formatPrice}
             colormapId={colormap}
             openInterestValue={openInterest[symbol] ?? 0}
+            decay={settings.levelDecay}
           />
         )}
       </main>

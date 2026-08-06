@@ -12,12 +12,12 @@ const cache = new TtlCache<Band[]>(WATCHLIST_TTL_MS);
 
 const ALL_TIERS = [true, true, true, true];
 
-async function bandsFor(symbol: string, interval: Interval): Promise<Band[]> {
+async function bandsFor(symbol: string, interval: Interval, decay: boolean): Promise<Band[]> {
   const candles = await fetchKlines(symbol, interval);
   if (candles.length === 0) return [];
 
   const oi = await fetchOpenInterest(symbol, interval, candles.length);
-  const map = buildHeatmap(candles, oi, interval);
+  const map = buildHeatmap(candles, oi, interval, { decay });
 
   // The latest column is the only one that describes levels still pending right now.
   const bands = topBands(map.matrices, ALL_TIERS, map.grid, map.nCols, map.nCols - 1, 60);
@@ -32,7 +32,7 @@ async function bandsFor(symbol: string, interval: Interval): Promise<Band[]> {
  * which is the only way "distance to the nearest magnet" means anything per row. Requests
  * are staggered so five symbols do not hit Bybit's rate limiter in the same tick.
  */
-export function useWatchlist(symbols: string[], interval: Interval) {
+export function useWatchlist(symbols: string[], interval: Interval, decay = false) {
   const [bands, setBands] = useState<Record<string, Band[]>>({});
   const key = symbols.join(',');
 
@@ -45,8 +45,10 @@ export function useWatchlist(symbols: string[], interval: Interval) {
       timers.push(
         setTimeout(async () => {
           try {
-            const result = await cache.get(`${symbol}:${interval}`, () =>
-              bandsFor(symbol, interval),
+            // Decay is part of the cache key: the same symbol under a different modelling
+            // assumption is different data, not a cache hit.
+            const result = await cache.get(`${symbol}:${interval}:${decay}`, () =>
+              bandsFor(symbol, interval, decay),
             );
             if (!cancelled) setBands((b) => ({ ...b, [symbol]: result }));
           } catch {
@@ -60,7 +62,7 @@ export function useWatchlist(symbols: string[], interval: Interval) {
       cancelled = true;
       timers.forEach(clearTimeout);
     };
-  }, [key, interval]);
+  }, [key, interval, decay]);
 
   return bands;
 }

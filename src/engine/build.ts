@@ -1,8 +1,9 @@
-import type { Candle, HeatmapData, Interval, OiPoint } from './types';
+import type { BuildOptions, Candle, HeatmapData, Interval, OiPoint } from './types';
 import { buildGrid, N_BUCKETS } from './grid';
 import { modeForInterval, tiersForMode } from './tiers';
 import { oiFactors } from './oi';
 import { clearRange, seedCandle } from './seed';
+import { applyDecay, floorSparse, tierDecayFactors } from './decay';
 
 /** Read one cell out of a tier matrix. */
 export function valueAt(map: HeatmapData, tier: number, col: number, bucket: number): number {
@@ -14,9 +15,15 @@ export function valueAt(map: HeatmapData, tier: number, col: number, bucket: num
  * per tier, and photograph that vector into a column after each candle.
  *
  * The per-candle order is deliberate and load-bearing:
- *   1. clear  — price traded through [low, high], so anything resting there is gone
- *   2. seed   — this candle's own entries create new pending levels
- *   3. snapshot — the column records what is still pending as of this candle
+ *   1. decay  — positions age out even where price never reached them (optional)
+ *   2. clear  — price traded through [low, high], so anything resting there is gone
+ *   3. seed   — this candle's own entries create new pending levels
+ *   4. snapshot — the column records what is still pending as of this candle
+ *
+ * Decay comes before seeding so a candle's own entries land at full weight: they were opened
+ * during this candle and have had no time to age. Running it inside the same walk is what
+ * makes the history consistent — a level seeded in 2024 visibly fades column by column
+ * instead of the whole chart being re-scaled at the end.
  *
  * `candles` must be oldest-first; the Bybit client reverses the API's newest-first list.
  */
@@ -24,6 +31,7 @@ export function buildHeatmap(
   candles: Candle[],
   oi: OiPoint[],
   interval: Interval,
+  options: BuildOptions = {},
 ): HeatmapData {
   const mode = modeForInterval(interval);
   const tiers = tiersForMode(mode);
@@ -33,6 +41,7 @@ export function buildHeatmap(
 
   const matrices = tiers.map(() => new Float32Array(nCols * N_BUCKETS));
   const emptyBaseline = () => tiers.map(() => new Float32Array(N_BUCKETS));
+  const decayFactors = options.decay ? tierDecayFactors(mode, tiers, interval) : null;
 
   if (nCols === 0) {
     return {
@@ -44,6 +53,7 @@ export function buildHeatmap(
       candles,
       baseline: emptyBaseline(),
       lastOiFactor: 1,
+      decayFactors,
     };
   }
 
@@ -62,8 +72,10 @@ export function buildHeatmap(
       baseline = levels.map((l) => l.slice());
     }
 
+    if (decayFactors) applyDecay(levels, decayFactors);
     clearRange(levels, grid, candle.low, candle.high);
     seedCandle(levels, grid, tiers, candle, factors[i]);
+    if (decayFactors) floorSparse(levels);
 
     const offset = i * N_BUCKETS;
     for (let t = 0; t < tiers.length; t++) {
@@ -80,6 +92,7 @@ export function buildHeatmap(
     candles,
     baseline,
     lastOiFactor: factors[nCols - 1],
+    decayFactors,
   };
 }
 
@@ -98,8 +111,10 @@ export function reseedLast(map: HeatmapData, candle: Candle): HeatmapData {
   if (map.nCols === 0) return map;
 
   const levels = map.baseline.map((l) => l.slice());
+  if (map.decayFactors) applyDecay(levels, map.decayFactors);
   clearRange(levels, map.grid, candle.low, candle.high);
   seedCandle(levels, map.grid, map.tiers, candle, map.lastOiFactor);
+  if (map.decayFactors) floorSparse(levels);
 
   // Written in place. Copying the matrices would allocate ~18 MB per websocket tick, which
   // at one tick a second is enough to OOM the renderer. Only the final column changes, and

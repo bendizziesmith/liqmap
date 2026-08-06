@@ -17,6 +17,8 @@ interface Props {
   colormapId: ColormapId;
   /** Open-interest notional, the anchor for each panel's displayed USD. */
   openInterestValue: number;
+  /** Age unswept levels out. Must match the heatmap tab, or the two tabs disagree. */
+  decay: boolean;
 }
 
 /** Trigger a client-side download. No server round trip, so it works offline too. */
@@ -37,8 +39,9 @@ function useMode(
   livePrice: number | null,
   nonce: number,
   oiValue: number,
+  decay: boolean,
 ) {
-  const { map, loading, error } = useHeatmap(symbol, interval, nonce);
+  const { map, loading, error } = useHeatmap(symbol, interval, nonce, decay);
 
   const profile = useMemo(() => {
     if (!map || map.nCols === 0) return null;
@@ -73,9 +76,10 @@ export function MapView({
   formatPrice,
   colormapId,
   openInterestValue,
+  decay,
 }: Props) {
-  const scalp = useMode(symbol, MAP_SCALP_INTERVAL, livePrice, nonce, openInterestValue);
-  const swing = useMode(symbol, MAP_SWING_INTERVAL, livePrice, nonce, openInterestValue);
+  const scalp = useMode(symbol, MAP_SCALP_INTERVAL, livePrice, nonce, openInterestValue, decay);
+  const swing = useMode(symbol, MAP_SWING_INTERVAL, livePrice, nonce, openInterestValue, decay);
 
   const exportMode = useCallback(
     (mode: 'scalping' | 'swing', interval: Interval, profile: typeof scalp.profile, scale: UsdScales) => {
@@ -97,7 +101,7 @@ export function MapView({
         formatPrice={formatPrice}
         colormapId={colormapId}
         usdScale={scalp.usdScale}
-        datasetKey={`${symbol}:${MAP_SCALP_INTERVAL}:${nonce}`}
+        datasetKey={`${symbol}:${MAP_SCALP_INTERVAL}:${nonce}:${decay}`}
       />
 
       <ProfileChart
@@ -110,7 +114,7 @@ export function MapView({
         formatPrice={formatPrice}
         colormapId={colormapId}
         usdScale={swing.usdScale}
-        datasetKey={`${symbol}:${MAP_SWING_INTERVAL}:${nonce}`}
+        datasetKey={`${symbol}:${MAP_SWING_INTERVAL}:${nonce}:${decay}`}
       />
 
       <p className="map__help">

@@ -11,12 +11,21 @@ export interface Settings {
   /** Fire when a qualifying band is within this percentage of price. */
   alertDistancePct: number;
   alertsEnabled: boolean;
+  /**
+   * Age unswept levels out by leverage instead of keeping them forever.
+   *
+   * On by default: without it the map shows dense shelves at prices the market left behind
+   * years ago, which cannot represent positions anyone is still holding. Off reproduces the
+   * clearing-only behaviour, for comparison.
+   */
+  levelDecay: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   alertMinScore: 70,
   alertDistancePct: 1.5,
   alertsEnabled: false,
+  levelDecay: true,
 };
 
 export type Tab = 'heatmap' | 'map';

@@ -39,7 +39,12 @@ export function useLiveHeatmap(state: State, forming: Candle | null): State {
   return map === state.map ? state : { ...state, map };
 }
 
-export function useHeatmap(symbol: string, interval: Interval, nonce: number): HeatmapState {
+export function useHeatmap(
+  symbol: string,
+  interval: Interval,
+  nonce: number,
+  decay = false,
+): HeatmapState {
   const [candles, setCandles] = useState<Candle[]>([]);
   const [oi, setOi] = useState<Parameters<typeof buildHeatmap>[1]>([]);
   const [loading, setLoading] = useState(true);
@@ -144,8 +149,8 @@ export function useHeatmap(symbol: string, interval: Interval, nonce: number): H
    * the existing matrices — it is a full rebuild by definition.
    */
   const map = useMemo(
-    () => (candles.length > 0 ? buildHeatmap(candles, oi, interval) : null),
-    [candles, oi, interval],
+    () => (candles.length > 0 ? buildHeatmap(candles, oi, interval, { decay }) : null),
+    [candles, oi, interval, decay],
   );
 
   return {

@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { buildHeatmap, reseedLast, valueAt } from './build';
 import { priceToBucket } from './grid';
 import { longLiqPrice } from './tiers';
-import type { Candle } from './types';
+import { clearRange, seedCandle } from './seed';
+import { oiFactors } from './oi';
+import type { Candle, Interval } from './types';
 
 const H = 3_600_000;
 
@@ -246,6 +248,144 @@ describe('reseedLast', () => {
   it('is a no-op on an empty map', () => {
     const empty = buildHeatmap([], [], '4h');
     expect(reseedLast(empty, history[0])).toBe(empty);
+  });
+});
+
+describe('level decay', () => {
+  /**
+   * Candle 0 deposits a book at price 100. Every later candle sits at 200 with zero
+   * turnover, so it seeds nothing and its [200, 200] range clears nothing candle 0 created.
+   * Whatever happens to those levels afterwards is decay and nothing else.
+   */
+  const aged = (n: number, interval: Interval = '1d') => [
+    candle(0, 100, 100, 100, 100, 1_000_000),
+    ...Array.from({ length: n }, (_, i) => candle(i + 1, 200, 200, 200, 200, 0)),
+  ].map((c, i) => ({ ...c, start: i * (interval === '1d' ? 24 * H : 4 * H) }));
+
+  it('leaves the seeding candle at full weight — decay ages the book, not the new entry', () => {
+    const map = buildHeatmap(aged(0), [], '1d', { decay: true });
+    let total = 0;
+    for (const m of map.matrices) for (const v of m) total += v;
+    expect(total).toBeCloseTo(1_000_000, 0);
+  });
+
+  it('carries 2^-N after N half-lives, exactly', () => {
+    // Swing 25x has a 5-day half-life, so on daily candles 5 columns is one half-life.
+    const map = buildHeatmap(aged(10), [], '1d', { decay: true });
+    const ti = map.tiers.indexOf(25);
+    const b = priceToBucket(map.grid, 100 * (1 + 1 / 25));
+
+    const seeded = valueAt(map, ti, 0, b);
+    expect(seeded).toBeGreaterThan(0);
+    expect(valueAt(map, ti, 5, b) / seeded).toBeCloseTo(0.5, 6);
+    expect(valueAt(map, ti, 10, b) / seeded).toBeCloseTo(0.25, 6);
+  });
+
+  it('fades a level a little more in every successive column', () => {
+    const map = buildHeatmap(aged(6), [], '4h', { decay: true });
+    const ti = map.tiers.indexOf(10);
+    const b = priceToBucket(map.grid, 100 * (1 + 1 / 10));
+    for (let col = 1; col <= 6; col++) {
+      expect(valueAt(map, ti, col, b)).toBeLessThan(valueAt(map, ti, col - 1, b));
+    }
+  });
+
+  it('ages each tier at its own rate, highest leverage fastest', () => {
+    const map = buildHeatmap(aged(8), [], '1d', { decay: true });
+    const survived = map.tiers.map((t, ti) => {
+      const b = priceToBucket(map.grid, 100 * (1 + 1 / t));
+      return valueAt(map, ti, 8, b) / valueAt(map, ti, 0, b);
+    });
+    for (let i = 1; i < survived.length; i++) {
+      expect(survived[i]).toBeLessThan(survived[i - 1]);
+    }
+  });
+
+  it('does not resurrect a swept level — clearing still wins', () => {
+    const swept = [
+      candle(0, 100, 100, 100, 100, 1_000_000),
+      candle(1, 100, 101, 85, 95, 1_000_000), // trades through the 10x long at 90
+    ];
+    const map = buildHeatmap(swept, [], '1d', { decay: true });
+    const ti = map.tiers.indexOf(10);
+    expect(valueAt(map, ti, 1, priceToBucket(map.grid, longLiqPrice(100, 10)))).toBe(0);
+  });
+
+  it('keeps the matrices sparse by flooring negligible values to zero', () => {
+    const long = aged(120);
+    const decayed = buildHeatmap(long, [], '1d', { decay: true });
+    const plain = buildHeatmap(long, [], '1d');
+    const nonZero = (m: typeof plain) => {
+      let n = 0;
+      for (const mat of m.matrices) for (const v of mat) if (v !== 0) n++;
+      return n;
+    };
+    expect(nonZero(decayed)).toBeLessThan(nonZero(plain));
+  });
+
+  it('reproduces the undecayed walk bit-for-bit when switched off', () => {
+    // The old algorithm, replayed by hand: clear, then seed, nothing else.
+    const candles = [
+      candle(0, 100, 103, 97, 101, 900_000),
+      candle(1, 101, 108, 99, 107, 1_400_000),
+      candle(2, 107, 110, 92, 94, 2_100_000),
+      candle(3, 94, 99, 88, 97, 700_000),
+    ];
+    const map = buildHeatmap(candles, [], '1d', { decay: false });
+
+    const levels = map.tiers.map(() => new Float32Array(map.grid.nBuckets));
+    const factors = oiFactors(candles, []);
+    for (let i = 0; i < candles.length; i++) {
+      clearRange(levels, map.grid, candles[i].low, candles[i].high);
+      seedCandle(levels, map.grid, map.tiers, candles[i], factors[i]);
+      for (let t = 0; t < map.tiers.length; t++) {
+        for (let b = 0; b < map.grid.nBuckets; b++) {
+          expect(valueAt(map, t, i, b)).toBe(levels[t][b]);
+        }
+      }
+    }
+  });
+
+  it('defaults to off, so the engine applies no modelling assumption unasked', () => {
+    const candles = aged(4);
+    const explicit = buildHeatmap(candles, [], '1d', { decay: false });
+    const implicit = buildHeatmap(candles, [], '1d');
+    for (let t = 0; t < explicit.tiers.length; t++) {
+      expect(Array.from(implicit.matrices[t])).toEqual(Array.from(explicit.matrices[t]));
+    }
+  });
+
+  it('actually changes the output when switched on', () => {
+    const candles = aged(4);
+    const on = buildHeatmap(candles, [], '1d', { decay: true });
+    const off = buildHeatmap(candles, [], '1d', { decay: false });
+    const last = (m: typeof on) => {
+      let s = 0;
+      const offset = (m.nCols - 1) * m.grid.nBuckets;
+      for (const mat of m.matrices) for (let i = offset; i < offset + m.grid.nBuckets; i++) s += mat[i];
+      return s;
+    };
+    expect(last(on)).toBeLessThan(last(off) * 0.99);
+  });
+
+  it('keeps reseedLast consistent with a full decayed rebuild', () => {
+    const history = [
+      candle(0, 100, 100, 100, 100, 1_000_000),
+      candle(1, 100, 101, 99, 100, 1_000_000),
+      candle(2, 100, 101, 99, 100, 1_000_000),
+    ];
+    const map = buildHeatmap(history, [], '1d', { decay: true });
+    const moved = { ...history[2], close: 100.8 };
+
+    const incremental = reseedLast(map, moved);
+    const rebuilt = buildHeatmap([history[0], history[1], moved], [], '1d', { decay: true });
+
+    const offset = (map.nCols - 1) * map.grid.nBuckets;
+    for (let t = 0; t < map.tiers.length; t++) {
+      for (let b = 0; b < map.grid.nBuckets; b++) {
+        expect(incremental.matrices[t][offset + b]).toBeCloseTo(rebuilt.matrices[t][offset + b], 3);
+      }
+    }
   });
 });
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { HeatmapData } from '../engine/types';
+import type { HeatmapData, Interval } from '../engine/types';
 import { bucketToPrice, priceToBucket } from '../engine/grid';
 import { normalizeScore } from '../engine/normalize';
 import { COLORMAPS, classAlpha, classBreaks, classOf, type ColormapId } from '../engine/classes';
@@ -11,6 +11,8 @@ import type { UsdScales } from '../engine/calibrate';
 import type { PriceFormatter } from './hooks/usePriceFormat';
 import { priceToY, yToPrice } from './scale';
 import { axisZoomFactor, scaleAbout, wheelZoomFactor } from './axis';
+import { timeTicks } from './timeAxis';
+import { INTERVAL_MS } from '../engine/interval';
 import { capturePointer, releasePointer } from './gesture';
 
 const AXIS_W = 62; // right-hand price gutter
@@ -23,6 +25,14 @@ const DEFAULT_COLS = 220;
  * the near-price structure that is actually tradeable. Zoom out to reach it.
  */
 const FIT_PAD = 0.15;
+
+/**
+ * Painted cells a side needs before it earns its own class scale.
+ *
+ * With price at the very edge of the view one side is a sliver, and drawing percentiles from
+ * a handful of cells would make that sliver flash between classes on every tick.
+ */
+const MIN_SIDE_SAMPLES = 64;
 
 /** Cumulative curve colours: longs below price, shorts above. Shared with the Map view. */
 export const LONG_COLOR = '#4ade80';
@@ -114,7 +124,7 @@ export function HeatmapCanvas({
   const [hover, setHover] = useState<Hover | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [cursor, setCursor] = useState('crosshair');
-  const [breaksForLegend, setBreaksForLegend] = useState<number[]>([]);
+  const [legend, setLegend] = useState<{ above: number[]; below: number[] } | null>(null);
   const mapRef = useRef(map);
   mapRef.current = map;
 
@@ -273,17 +283,46 @@ export function HeatmapCanvas({
       return sum;
     };
 
+    /*
+     * Class breaks are computed per side of the book.
+     *
+     * One shared percentile ladder ranks every visible cell together, and whichever side
+     * price happens to sit near occupies a far narrower band of buckets — so its levels are
+     * denser per bucket and take the top classes, while the other side collapses into the
+     * two faintest. Measured on XRPUSDT 1d, the above-price half held $28.16B against the
+     * below-price half's $10.75B and still rendered with 3.9% hot cells against 49.2%: the
+     * scale was hiding 2.6x more mass than it showed. Ranking each side against its own
+     * distribution costs cross-side comparability — which the tooltip and the side panel
+     * still give exactly — and buys back the structure of whichever half is quieter.
+     */
+    const priceBucket = livePrice != null && livePrice > 0 ? priceToBucket(grid, livePrice) : -1;
+
     const visible: number[] = [];
+    const above: number[] = [];
+    const below: number[] = [];
     for (let c = c0; c < c1; c++) {
       for (let b = b0; b <= b1; b++) {
         const v = valueAtCell(c, b);
-        if (v > 0) visible.push(v);
+        if (v <= 0) continue;
+        visible.push(v);
+        if (b > priceBucket) above.push(v);
+        else if (b < priceBucket) below.push(v);
       }
     }
-    const breaks = classBreaks(visible);
-    setBreaksForLegend((prev) =>
-      prev.length === breaks.length && prev.every((v, i) => v === breaks[i]) ? prev : breaks,
-    );
+
+    // Too few samples on a side means price is at the edge of the window, where a per-side
+    // scale would be drawn from a handful of cells. Fall back to one ladder for both.
+    const shared = classBreaks(visible);
+    const split = priceBucket >= 0 && above.length >= MIN_SIDE_SAMPLES && below.length >= MIN_SIDE_SAMPLES;
+    const breaksAbove = split ? classBreaks(above) : shared;
+    const breaksBelow = split ? classBreaks(below) : shared;
+
+    const sameLegend = (prev: typeof legend) =>
+      prev != null &&
+      prev.above.every((v, i) => v === breaksAbove[i]) &&
+      prev.below.every((v, i) => v === breaksBelow[i]);
+    setLegend((prev) => (sameLegend(prev) ? prev : { above: breaksAbove, below: breaksBelow }));
+
     const ramp = COLORMAPS[colormapId] ?? COLORMAPS.inferno;
 
     let raster = rasterRef.current;
@@ -301,7 +340,7 @@ export function HeatmapCanvas({
     for (let c = c0; c < c1; c++) {
       const cx = c - c0;
       for (let b = b0; b <= b1; b++) {
-        const cls = classOf(valueAtCell(c, b), breaks);
+        const cls = classOf(valueAtCell(c, b), b > priceBucket ? breaksAbove : breaksBelow);
         const i = ((b1 - b) * cols + cx) * 4;
         if (cls < 0) {
           px[i + 3] = 0;
@@ -372,7 +411,11 @@ export function HeatmapCanvas({
           // Same 0.68 gamma as the heat colours; without it the unswept shelf at the grid
           // edge owns the scale and everything near price is a hairline.
           const barW = normalizeScore(row.total, panel.rowMax) * usable;
-          const hot = classOf(row.total, breaks) === COLORMAPS.inferno.classColors.length - 1;
+          // Rows above the price row are higher prices, so they are judged on the short
+          // side's scale — the same split the raster uses.
+          const hot =
+            classOf(row.total, r < panel.priceRow ? breaksAbove : breaksBelow) ===
+            COLORMAPS.inferno.classColors.length - 1;
 
           let x = axisX;
           for (let t = 0; t < row.tiers.length; t++) {
@@ -484,17 +527,49 @@ export function HeatmapCanvas({
     }
 
     // ---- time axis ----
+    // Ticks come from the time domain and land on calendar boundaries, so a label is glued
+    // to its date: panning slides them with the chart and a backfill prepend, which shifts
+    // every column index, leaves them exactly where they were.
     ctx.textBaseline = 'top';
-    const tTicks = Math.max(2, Math.min(8, Math.floor(plot.w / 110)));
-    for (let i = 0; i <= tTicks; i++) {
-      const col = Math.floor(view.c0 + ((view.c1 - view.c0) * i) / tTicks);
-      const k = map.candles[Math.max(0, Math.min(nCols - 1, col))];
-      if (!k) continue;
-      const x = (col - view.c0) * colW;
-      const label = formatTime(k.start, interval);
-      const w = ctx.measureText(label).width;
-      ctx.fillStyle = 'rgba(148,163,184,0.9)';
-      ctx.fillText(label, Math.min(Math.max(0, x - w / 2), plot.w - w), plot.h + 6);
+    const stepMs = INTERVAL_MS[interval as Interval] ?? 36e5;
+    const timeAtCol = (col: number) => {
+      const cs = map.candles;
+      const i = Math.floor(col);
+      if (i < 0) return cs[0].start + col * stepMs;
+      if (i >= cs.length - 1) return cs[cs.length - 1].start + (col - (cs.length - 1)) * stepMs;
+      return cs[i].start + (col - i) * (cs[i + 1].start - cs[i].start);
+    };
+    const colAtTime = (t: number) => {
+      const cs = map.candles;
+      if (t <= cs[0].start) return (t - cs[0].start) / stepMs;
+      const last = cs.length - 1;
+      if (t >= cs[last].start) return last + (t - cs[last].start) / stepMs;
+      let lo = 0;
+      let hi = last;
+      while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (cs[mid].start <= t) lo = mid;
+        else hi = mid;
+      }
+      const span = cs[hi].start - cs[lo].start || stepMs;
+      return lo + (t - cs[lo].start) / span;
+    };
+
+    for (const tick of timeTicks(timeAtCol(view.c0), timeAtCol(view.c1), plot.w)) {
+      const x = (colAtTime(tick.time) - view.c0) * colW;
+      if (x < 0 || x > plot.w) continue;
+
+      if (tick.major) {
+        ctx.strokeStyle = 'rgba(148,163,184,0.14)';
+        ctx.beginPath();
+        ctx.moveTo(Math.round(x) + 0.5, 0);
+        ctx.lineTo(Math.round(x) + 0.5, plot.h + 3);
+        ctx.stroke();
+      }
+
+      const w = ctx.measureText(tick.label).width;
+      ctx.fillStyle = tick.major ? 'rgba(226,232,240,0.95)' : 'rgba(148,163,184,0.85)';
+      ctx.fillText(tick.label, Math.min(Math.max(0, x - w / 2), plot.w - w), plot.h + 6);
     }
 
     // ---- crosshair ----
@@ -801,15 +876,31 @@ export function HeatmapCanvas({
 
       {/* Intensity scale. Charts guidance is explicit that an intensity map needs a legend
           and must not lean on colour alone — this also makes the class breaks checkable. */}
-      {map && breaksForLegend.length > 0 && (
+      {map && legend && (
         <div className="legend" aria-label="Intensity classes, estimated USD">
           <span className="legend__title">est. $ / level</span>
-          {ramp.classColors.map((c, i) => (
-            <span className="legend__item" key={i}>
-              <i style={{ background: `rgb(${c[0]},${c[1]},${c[2]})`, opacity: classAlpha(i) / 255 }} />
-              {i === 0 ? `< ${formatUsd(breaksForLegend[0] * usdScale.long)}` : `${formatUsd(breaksForLegend[i - 1] * usdScale.long)}+`}
-            </span>
-          ))}
+          <div className="legend__rows">
+            {([
+              { key: 'above', mark: '\u25b2', name: 'shorts', breaks: legend.above, scale: usdScale.short },
+              { key: 'below', mark: '\u25bc', name: 'longs', breaks: legend.below, scale: usdScale.long },
+            ] as const).map((side) => (
+              <div className="legend__row" key={side.key}>
+                <span className="legend__side">
+                  {side.mark} {side.name}
+                </span>
+                {ramp.classColors.map((c, i) => (
+                  <span className="legend__item" key={i}>
+                    <i style={{ background: `rgb(${c[0]},${c[1]},${c[2]})`, opacity: classAlpha(i) / 255 }} />
+                    <b className="legend__num">
+                      {i === 0
+                        ? `< ${formatUsd(side.breaks[0] * side.scale)}`
+                        : `${formatUsd(side.breaks[i - 1] * side.scale)}+`}
+                    </b>
+                  </span>
+                ))}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

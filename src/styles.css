@@ -959,9 +959,10 @@ body {
   left: 10px;
   top: 8px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 9px;
-  padding: 4px 9px;
+  max-width: calc(100% - 20px);
+  padding: 5px 9px;
   background: rgba(9, 11, 17, 0.82);
   border: 1px solid var(--line-soft);
   border-radius: var(--r-md);
@@ -975,6 +976,33 @@ body {
 .legend__title {
   color: var(--muted);
   letter-spacing: 0.04em;
+  padding-top: 1px;
+}
+
+/* One row per side of the book: the two halves are ranked on their own scales, so a single
+   ladder of numbers would be wrong for whichever side it did not describe. */
+.legend__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.legend__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.legend__side {
+  width: 46px;
+  flex: none;
+  color: var(--muted);
+}
+
+.legend__num {
+  font-weight: 400;
 }
 
 .legend__item {
@@ -988,6 +1016,19 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 2px;
+  flex: none;
+}
+
+/* On a phone the chart is barely wider than the numbers themselves. The swatch ordering
+   still carries the hierarchy; exact figures stay one tap away in the tooltip. */
+@media (max-width: 720px) {
+  .legend__num {
+    display: none;
+  }
+
+  .legend__side {
+    width: 40px;
+  }
 }
 
 /* Stacked colormap picker in the settings drawer. */

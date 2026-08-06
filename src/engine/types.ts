@@ -51,6 +51,24 @@ export interface HeatmapData {
   baseline: Float32Array[];
   /** OI factor applied to the final candle, reused when that candle is re-seeded live. */
   lastOiFactor: number;
+  /**
+   * Per-tier survival factor applied once per candle, or `null` when decay is off.
+   *
+   * Stored so `reseedLast` can age the baseline the same way the walk did, rather than
+   * re-deriving it and drifting out of step with the historical columns.
+   */
+  decayFactors: number[] | null;
+}
+
+/** Modelling switches for a build. Off by default: the engine assumes nothing unasked. */
+export interface BuildOptions {
+  /**
+   * Age unswept levels out exponentially by leverage.
+   *
+   * The clearing rule alone treats every never-swept level as a standing position, but most
+   * positions close without ever being liquidated, so old levels are ghosts.
+   */
+  decay?: boolean;
 }
 
 /** A contiguous run of high-score buckets, used by the watchlist and alerts. */
