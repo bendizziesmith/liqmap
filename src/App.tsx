@@ -3,8 +3,9 @@ import type { Interval } from './engine/types';
 import { tiersForMode, modeForInterval } from './engine/tiers';
 import { topBands, bandsWithin } from './engine/bands';
 import { scaleBandsTo100 } from './engine/alerts';
-import { BAND_WINDOW_PCT, DEFAULT_SETTINGS, DEFAULT_VIEW, PRESET_SYMBOLS } from './config';
+import { BAND_WINDOW_PCT, DEFAULT_SETTINGS, DEFAULT_VIEW, PRESET_SYMBOLS, type Tab } from './config';
 import { HeatmapCanvas } from './ui/HeatmapCanvas';
+import { MapView } from './ui/MapView';
 import { Toolbar } from './ui/Toolbar';
 import { Watchlist } from './ui/Watchlist';
 import { Settings } from './ui/Settings';
@@ -14,6 +15,7 @@ import { useHeatmap } from './ui/hooks/useHeatmap';
 import { useLive } from './ui/hooks/useLive';
 import { useWatchlist } from './ui/hooks/useWatchlist';
 import { useAlerts } from './ui/hooks/useAlerts';
+import { useMedia } from './ui/hooks/useMedia';
 
 export default function App() {
   const [view, patchView] = usePersisted('liqmap.view', DEFAULT_VIEW);
@@ -21,8 +23,12 @@ export default function App() {
   const [nonce, setNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  const { symbol, interval, enabledTiers } = view;
+  const { symbol, interval, enabledTiers, tab, showProfile } = view;
   const tiers = useMemo(() => tiersForMode(modeForInterval(interval)), [interval]);
+
+  // 90px of profile is not affordable on a phone, so it collapses regardless of preference.
+  const narrow = useMedia('(max-width: 720px)');
+  const profileVisible = showProfile && !narrow;
 
   const { map, loading, error } = useHeatmap(symbol, interval, nonce);
 
@@ -61,11 +67,16 @@ export default function App() {
       <Toolbar
         symbol={symbol}
         interval={interval}
+        tab={tab}
         tiers={tiers}
         enabledTiers={enabledTiers}
+        showProfile={showProfile}
+        profileLocked={narrow}
         onSymbol={(s) => patchView({ symbol: s })}
         onInterval={(i: Interval) => patchView({ interval: i })}
+        onTab={(t: Tab) => patchView({ tab: t })}
         onToggleTier={onToggleTier}
+        onToggleProfile={() => patchView({ showProfile: !showProfile })}
         onRefresh={() => setNonce((n) => n + 1)}
         onSettings={() => setSettingsOpen(true)}
       />
@@ -80,12 +91,17 @@ export default function App() {
       />
 
       <main className="main">
-        <HeatmapCanvas
-          map={loading ? null : map}
-          enabledTiers={enabledTiers}
-          livePrice={livePrice}
-          interval={interval}
-        />
+        {tab === 'heatmap' ? (
+          <HeatmapCanvas
+            map={loading ? null : map}
+            enabledTiers={enabledTiers}
+            livePrice={livePrice}
+            interval={interval}
+            showProfile={profileVisible}
+          />
+        ) : (
+          <MapView symbol={symbol} livePrice={livePrice} nonce={nonce} />
+        )}
       </main>
 
       <StatusBar

@@ -37,3 +37,22 @@ export function inferno(x: number): [number, number, number] {
 export function alphaFor(x: number): number {
   return Math.round(35 + 220 * Math.min(1, 1.25 * Math.max(0, x)));
 }
+
+/**
+ * One colour per leverage tier, sampled from the ramp above so the tier chips, the Map view
+ * bars and the heatmap side panel all speak the same visual language as the heat itself
+ * rather than introducing a second colour system.
+ *
+ * Index 0 is the lowest leverage (largest capital share, furthest liquidation) and index 3
+ * the highest — so brighter reads as hotter leverage, closer to price.
+ */
+export const TIER_COLORS = ['#6a0a68', '#bb3754', '#f98e09', '#f5db4c'] as const;
+
+/** Perceived brightness of a `#rrggbb` colour, used to keep the tier ramp ordered. */
+export function luminanceOf(hex: string): number {
+  const n = parseInt(hex.slice(1), 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}

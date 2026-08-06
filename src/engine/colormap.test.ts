@@ -1,5 +1,31 @@
 import { describe, it, expect } from 'vitest';
-import { inferno, alphaFor } from './colormap';
+import { inferno, alphaFor, TIER_COLORS, luminanceOf } from './colormap';
+
+describe('TIER_COLORS', () => {
+  it('has one colour per tier', () => {
+    expect(TIER_COLORS).toHaveLength(4);
+  });
+
+  it('are all valid six-digit hex colours', () => {
+    for (const c of TIER_COLORS) expect(c).toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  it('gets brighter with leverage, so the ordering carries meaning', () => {
+    let prev = -1;
+    for (const c of TIER_COLORS) {
+      const l = luminanceOf(c);
+      expect(l).toBeGreaterThan(prev);
+      prev = l;
+    }
+  });
+
+  it('are distinguishable from each other', () => {
+    const lums = TIER_COLORS.map(luminanceOf);
+    for (let i = 1; i < lums.length; i++) {
+      expect(lums[i] - lums[i - 1]).toBeGreaterThan(20);
+    }
+  });
+});
 
 describe('inferno', () => {
   it('starts near black', () => {

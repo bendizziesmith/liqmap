@@ -2,10 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { HeatmapData } from '../engine/types';
 import { bucketToPrice, priceToBucket } from '../engine/grid';
 import { computeVmax, normalizeScore } from '../engine/normalize';
-import { alphaFor, inferno } from '../engine/colormap';
+import { alphaFor, inferno, TIER_COLORS } from '../engine/colormap';
+import { lastColumn } from '../engine/profile';
+import { priceToY, yToPrice } from './scale';
 
 const AXIS_W = 62; // right-hand price gutter
 const AXIS_H = 22; // bottom time gutter
+const PROFILE_W = 90; // right-docked liquidation profile strip
 const DEFAULT_COLS = 220;
 /**
  * Price padding around the visible candles, as a fraction of their span. Kept tight: the
@@ -26,6 +29,7 @@ interface Props {
   enabledTiers: boolean[];
   livePrice: number | null;
   interval: string;
+  showProfile: boolean;
 }
 
 interface Hover {
@@ -74,7 +78,7 @@ function formatTime(ms: number, interval: string): string {
   return `${date} ${hh}:${mm}`;
 }
 
-export function HeatmapCanvas({ map, enabledTiers, livePrice, interval }: Props) {
+export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProfile }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const rasterRef = useRef<HTMLCanvasElement | null>(null);
@@ -98,6 +102,9 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval }: Props)
     }
     return out;
   }, [map, enabledTiers]);
+
+  /** Active levels as of the latest candle — the same data the Map view profiles. */
+  const active = useMemo(() => (map && map.nCols > 0 ? lastColumn(map) : null), [map]);
 
   // Refit whenever a different dataset arrives.
   useEffect(() => {
@@ -138,19 +145,17 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval }: Props)
     };
   }, []);
 
-  const plot = useMemo(
-    () => ({ x: 0, y: 0, w: Math.max(0, size.w - AXIS_W), h: Math.max(0, size.h - AXIS_H) }),
-    [size],
-  );
+  const profileW = showProfile ? PROFILE_W : 0;
 
-  const priceToY = useCallback(
-    (price: number, v: View) => plot.h - ((price - v.p0) / (v.p1 - v.p0)) * plot.h,
-    [plot.h],
+  const plot = useMemo(
+    () => ({
+      w: Math.max(0, size.w - AXIS_W - profileW),
+      h: Math.max(0, size.h - AXIS_H),
+    }),
+    [size, profileW],
   );
-  const yToPrice = useCallback(
-    (y: number, v: View) => v.p0 + ((plot.h - y) / plot.h) * (v.p1 - v.p0),
-    [plot.h],
-  );
+  const profileX = plot.w;
+  const axisX = plot.w + profileW;
 
   // ---- paint -------------------------------------------------------------
   useEffect(() => {
@@ -166,6 +171,8 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval }: Props)
     ctx.clearRect(0, 0, size.w, size.h);
 
     const { grid, nCols } = map;
+    const toY = (price: number) => priceToY(price, view.p0, view.p1, plot.h);
+
     const c0 = Math.max(0, Math.floor(view.c0));
     const c1 = Math.min(nCols, Math.ceil(view.c1));
     const b0 = priceToBucket(grid, view.p0);
@@ -207,10 +214,15 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval }: Props)
     // Align the blit to the exact price/time window the raster covers.
     const topPrice = bucketToPrice(grid, b1) + grid.step / 2;
     const botPrice = bucketToPrice(grid, b0) - grid.step / 2;
-    const yTop = priceToY(topPrice, view);
-    const yBot = priceToY(botPrice, view);
+    const yTop = toY(topPrice);
+    const yBot = toY(botPrice);
     const colW = plot.w / (view.c1 - view.c0);
     const xLeft = (c0 - view.c0) * colW;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, plot.w, plot.h);
+    ctx.clip();
 
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(raster, xLeft, yTop, cols * colW, yBot - yTop);
@@ -224,46 +236,101 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval }: Props)
       if (cx < -colW || cx > plot.w + colW) continue;
 
       const up = k.close >= k.open;
-      const stroke = up ? 'rgba(94,234,212,0.85)' : 'rgba(248,113,113,0.85)';
-      ctx.strokeStyle = stroke;
+      ctx.strokeStyle = up ? 'rgba(94,234,212,0.85)' : 'rgba(248,113,113,0.85)';
       ctx.fillStyle = up ? 'rgba(94,234,212,0.30)' : 'rgba(248,113,113,0.30)';
 
-      const yH = priceToY(k.high, view);
-      const yL = priceToY(k.low, view);
       ctx.beginPath();
-      ctx.moveTo(Math.round(cx) + 0.5, yH);
-      ctx.lineTo(Math.round(cx) + 0.5, yL);
+      ctx.moveTo(Math.round(cx) + 0.5, toY(k.high));
+      ctx.lineTo(Math.round(cx) + 0.5, toY(k.low));
       ctx.stroke();
 
       if (colW >= 3) {
-        const yO = priceToY(k.open, view);
-        const yC = priceToY(k.close, view);
+        const yO = toY(k.open);
+        const yC = toY(k.close);
         const top = Math.min(yO, yC);
         const h = Math.max(1, Math.abs(yC - yO));
         ctx.fillRect(cx - bodyW / 2, top, bodyW, h);
         ctx.strokeRect(cx - bodyW / 2, top, bodyW, h);
       }
     }
+    ctx.restore();
+
+    // ---- side profile ----
+    // Bars are accumulated per screen row through the same `toY` the heat and candles use,
+    // so a bar sits at exactly the height of the band it describes. That is the alignment
+    // guarantee: there is one transform here, not two that must be kept in agreement.
+    if (showProfile && active) {
+      const nRows = Math.max(1, Math.ceil(plot.h));
+      const nTiers = active.length;
+      const acc = Array.from({ length: nTiers }, () => new Float32Array(nRows));
+
+      for (let b = b0; b <= b1; b++) {
+        const row = Math.floor(toY(bucketToPrice(grid, b)));
+        if (row < 0 || row >= nRows) continue;
+        for (let t = 0; t < nTiers; t++) {
+          if (enabledTiers[t]) acc[t][row] += active[t][b];
+        }
+      }
+
+      let rowMax = 0;
+      for (let r = 0; r < nRows; r++) {
+        let sum = 0;
+        for (let t = 0; t < nTiers; t++) sum += acc[t][r];
+        if (sum > rowMax) rowMax = sum;
+      }
+
+      ctx.fillStyle = 'rgba(13,15,22,0.55)';
+      ctx.fillRect(profileX, 0, profileW, plot.h);
+
+      if (rowMax > 0) {
+        const usable = profileW - 4;
+        for (let r = 0; r < nRows; r++) {
+          let sum = 0;
+          for (let t = 0; t < nTiers; t++) sum += acc[t][r];
+          if (sum <= 0) continue;
+
+          // Same 0.68 gamma the heat colours use. Without it the unswept shelf at the grid
+          // edge owns the whole scale and every level near price renders as a hairline.
+          const rowW = normalizeScore(sum, rowMax) * usable;
+
+          let x = profileX;
+          for (let t = 0; t < nTiers; t++) {
+            const v = acc[t][r];
+            if (v <= 0) continue;
+            const w = (v / sum) * rowW;
+            ctx.fillStyle = TIER_COLORS[t] ?? TIER_COLORS[TIER_COLORS.length - 1];
+            ctx.fillRect(x, r, w, 1);
+            x += w;
+          }
+        }
+      }
+
+      ctx.strokeStyle = 'rgba(148,163,184,0.18)';
+      ctx.beginPath();
+      ctx.moveTo(profileX + 0.5, 0);
+      ctx.lineTo(profileX + 0.5, plot.h);
+      ctx.stroke();
+    }
 
     // ---- live price ----
     if (livePrice != null && livePrice >= view.p0 && livePrice <= view.p1) {
-      const y = priceToY(livePrice, view);
+      const y = toY(livePrice);
       ctx.save();
       ctx.setLineDash([5, 4]);
       ctx.strokeStyle = '#f8fafc';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(0, y + 0.5);
-      ctx.lineTo(plot.w, y + 0.5);
+      ctx.lineTo(axisX, y + 0.5);
       ctx.stroke();
       ctx.restore();
 
       ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(plot.w, y - 9, AXIS_W, 18);
+      ctx.fillRect(axisX, y - 9, AXIS_W, 18);
       ctx.fillStyle = '#07070b';
       ctx.font = '600 11px ui-monospace, SFMono-Regular, Menlo, monospace';
       ctx.textBaseline = 'middle';
-      ctx.fillText(formatPrice(livePrice), plot.w + 6, y);
+      ctx.fillText(formatPrice(livePrice), axisX + 6, y);
     }
 
     // ---- price axis ----
@@ -273,9 +340,10 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval }: Props)
     const ticks = Math.max(2, Math.min(10, Math.floor(plot.h / 46)));
     for (let i = 0; i <= ticks; i++) {
       const price = view.p0 + ((view.p1 - view.p0) * i) / ticks;
-      const y = priceToY(price, view);
-      if (livePrice != null && Math.abs(y - priceToY(livePrice, view)) < 12) continue;
-      ctx.fillText(formatPrice(price), plot.w + 6, y);
+      const y = toY(price);
+      if (livePrice != null && Math.abs(y - toY(livePrice)) < 12) continue;
+      ctx.fillStyle = 'rgba(148,163,184,0.9)';
+      ctx.fillText(formatPrice(price), axisX + 6, y);
       ctx.strokeStyle = 'rgba(148,163,184,0.10)';
       ctx.beginPath();
       ctx.moveTo(0, y + 0.5);
@@ -306,11 +374,26 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval }: Props)
       ctx.moveTo(hover.x + 0.5, 0);
       ctx.lineTo(hover.x + 0.5, plot.h);
       ctx.moveTo(0, hover.y + 0.5);
-      ctx.lineTo(plot.w, hover.y + 0.5);
+      ctx.lineTo(axisX, hover.y + 0.5);
       ctx.stroke();
       ctx.restore();
     }
-  }, [map, view, combined, enabledTiers, livePrice, size, plot, hover, priceToY, interval]);
+  }, [
+    map,
+    view,
+    combined,
+    active,
+    enabledTiers,
+    livePrice,
+    size,
+    plot,
+    hover,
+    interval,
+    showProfile,
+    profileW,
+    profileX,
+    axisX,
+  ]);
 
   // ---- interaction -------------------------------------------------------
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -320,7 +403,6 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval }: Props)
   const onWheel = useCallback(
     (e: React.WheelEvent) => {
       if (!view || !map) return;
-      e.preventDefault();
       const rect = canvasRef.current!.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
@@ -330,10 +412,8 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval }: Props)
         if (!v) return v;
         // Modifier zooms price; the bare wheel zooms time, which is the common case.
         if (e.shiftKey || e.ctrlKey || e.metaKey) {
-          const anchor = yToPrice(my, v);
-          const p0 = anchor - (anchor - v.p0) * factor;
-          const p1 = anchor + (v.p1 - anchor) * factor;
-          return { ...v, p0, p1 };
+          const anchor = yToPrice(my, v.p0, v.p1, plot.h);
+          return { ...v, p0: anchor - (anchor - v.p0) * factor, p1: anchor + (v.p1 - anchor) * factor };
         }
         const anchorCol = v.c0 + (mx / plot.w) * (v.c1 - v.c0);
         let c0 = anchorCol - (anchorCol - v.c0) * factor;
@@ -344,7 +424,7 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval }: Props)
         return { ...v, c0, c1 };
       });
     },
-    [view, map, plot.w, yToPrice],
+    [view, map, plot.w, plot.h],
   );
 
   const onPointerDown = useCallback(
@@ -372,7 +452,7 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval }: Props)
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
       const canvas = canvasRef.current;
-      if (!canvas || !map || !view || !combined) return;
+      if (!canvas || !map || !view) return;
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
@@ -428,13 +508,13 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval }: Props)
         setHover(null);
         return;
       }
-      const price = yToPrice(my, view);
+      const price = yToPrice(my, view.p0, view.p1, plot.h);
       const bucket = priceToBucket(map.grid, price);
       const scores = map.matrices.map((m) => m[col * map.grid.nBuckets + bucket]);
 
       setHover({ x: mx, y: my, price, col, scores, time: map.candles[col].start });
     },
-    [map, view, combined, plot, yToPrice],
+    [map, view, plot],
   );
 
   const endPointer = useCallback((e: React.PointerEvent) => {
@@ -490,7 +570,10 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval }: Props)
           </div>
           {map.tiers.map((t, i) => (
             <div className="tip__row" key={t} data-off={!enabledTiers[i]}>
-              <span>{t}×</span>
+              <span>
+                <i className="tip__swatch" style={{ background: TIER_COLORS[i] }} />
+                {t}×
+              </span>
               <span>{hover.scores[i] > 0 ? hover.scores[i].toFixed(2) : '—'}</span>
             </div>
           ))}

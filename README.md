@@ -35,6 +35,34 @@ swept, and it is the single most informative thing on the chart.
 Scores are **relative**, not dollars. They rank levels against each other on the current
 screen; they are not exchange-reported position sizes.
 
+## Liquidation Map
+
+The **Map** tab answers a different question from the heatmap. The heatmap is history — how
+levels built up and got swept over time. The Map is *now*: how much estimated liquidation
+volume is sitting at each price level at this moment, stacked by leverage tier.
+
+![Liquidation Map](docs/screenshots/map-desktop.png)
+
+It is literally the heatmap's **last column** — the active-levels snapshot after the most
+recent candle's clearing pass — reshaped into a price profile. There is no second pipeline.
+
+- **Scalping** (10/25/50/100×, from 1h candles) and **Swing** (3/5/10/25×, from 4h) are
+  shown together, because the two leverage regimes sit at very different distances.
+- Everything **left of the dashed marker is long liquidations**, everything right is shorts.
+- The **cumulative curve** sums outward from current price in each direction: how much total
+  liquidation price would pass through to reach a given level.
+- **Export CSV** gives `price_from, price_to, L1..L4, cumulative` per mode.
+
+You will usually see a **gap either side of current price**. That is not missing data — the
+latest candle cleared its own high–low range, so nothing is pending where price just traded.
+
+The same profile is available as a **side panel** on the heatmap (the panel button in the
+toolbar), drawn against the chart's own price axis so each bar sits at exactly the height of
+the band it describes. It collapses automatically on narrow screens.
+
+Tier colours mean the same thing everywhere — toolbar chips, Map bars, side panel:
+deep purple is the lowest leverage, bright yellow the highest.
+
 ## Controls
 
 - **Wheel** zooms time, **shift/ctrl+wheel** zooms price, **drag** pans, **double-click**
@@ -57,13 +85,20 @@ src/
     build.ts        the walk: clear → seed → snapshot, one column per candle
     normalize.ts    p99.7 percentile → vmax, gamma curve
     bands.ts        column → ranked price levels
+    profile.ts      last column → binned, tier-stacked profile + cumulative curves
+    profileCsv.ts   profile → CSV
     alerts.ts       relative band scaling, proximity + cooldown logic
-    colormap.ts     inferno ramp
+    colormap.ts     inferno ramp + the four tier colours
   data/       network only
     rest.ts         kline, open interest (cursor paginated), tickers
     ws.ts           public linear socket, 20s ping, backoff reconnect
     cache.ts        TTL memo shared by the watchlist
-  ui/         React: canvas renderer, toolbar, watchlist, settings, hooks
+  ui/         React
+    scale.ts        the one price↔Y transform, shared by chart and side panel
+    HeatmapCanvas   heat raster, candles, crosshair, docked profile strip
+    ProfileChart    one Map panel: bars, cumulative, brush, tooltip
+    MapView         Scalping + Swing panels, CSV export
+    …               toolbar, watchlist, settings, hooks
 ```
 
 ### The model

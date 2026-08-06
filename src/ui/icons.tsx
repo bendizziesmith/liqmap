@@ -39,6 +39,13 @@ export const RefreshIcon = ({ size = 16 }: IconProps) => (
   </svg>
 );
 
+export const PanelIcon = ({ size = 16 }: IconProps) => (
+  <svg {...base(size)}>
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <path d="M15 3v18" />
+  </svg>
+);
+
 export const BellIcon = ({ size = 16 }: IconProps) => (
   <svg {...base(size)}>
     <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />

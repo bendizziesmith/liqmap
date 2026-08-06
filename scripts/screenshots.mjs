@@ -16,10 +16,23 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const BASE = process.argv[2] ?? 'http://localhost:5177/';
 const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'docs', 'screenshots');
 
+const DESKTOP = { width: 1440, height: 900, dsf: 1 };
+const PHONE = { width: 390, height: 844, dsf: 2, mobile: true };
+
 const SHOTS = [
-  { name: 'desktop.png', width: 1440, height: 900, dsf: 1 },
-  { name: 'mobile.png', width: 390, height: 844, dsf: 2, mobile: true },
+  { name: 'desktop.png', ...DESKTOP, view: { symbol: 'BTCUSDT', tab: 'heatmap', showProfile: true } },
+  { name: 'mobile.png', ...PHONE, view: { symbol: 'BTCUSDT', tab: 'heatmap', showProfile: true } },
+  { name: 'map-desktop.png', ...DESKTOP, view: { symbol: 'XRPUSDT', tab: 'map', showProfile: true } },
+  { name: 'map-mobile.png', ...PHONE, view: { symbol: 'XRPUSDT', tab: 'map', showProfile: true } },
 ];
+
+const BASE_VIEW = {
+  symbol: 'BTCUSDT',
+  interval: '4h',
+  enabledTiers: [true, true, true, true],
+  tab: 'heatmap',
+  showProfile: true,
+};
 
 mkdirSync(OUT, { recursive: true });
 
@@ -39,18 +52,27 @@ for (const shot of SHOTS) {
     hasTouch: Boolean(shot.mobile),
   });
 
+  // Seed the persisted view so each shot lands on the surface it is meant to show.
+  const view = JSON.stringify({ ...BASE_VIEW, ...shot.view });
+  await page.evaluateOnNewDocument((v) => {
+    localStorage.setItem('liqmap.view', v);
+  }, view);
+
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 
-  // Wait until the engine has actually built a map — the status bar reports the count.
+  const ready =
+    shot.view.tab === 'map'
+      ? // Both Map panels must have finished loading.
+        () => document.querySelectorAll('.panel').length === 2 &&
+              document.querySelectorAll('.panel__empty').length === 0
+      : () => {
+          const el = document.querySelector('.status');
+          return el && /[1-9]\d*\s+candles/.test(el.textContent ?? '');
+        };
+
   await page
-    .waitForFunction(
-      () => {
-        const el = document.querySelector('.status');
-        return el && /[1-9]\d*\s+candles/.test(el.textContent ?? '');
-      },
-      { timeout: 45_000 },
-    )
-    .catch(() => console.warn(`${shot.name}: timed out waiting for candles`));
+    .waitForFunction(ready, { timeout: 60_000 })
+    .catch(() => console.warn(`${shot.name}: timed out waiting for content`));
 
   // Let the live price and the first paint settle.
   await new Promise((r) => setTimeout(r, 2500));
