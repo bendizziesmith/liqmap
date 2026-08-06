@@ -11,6 +11,29 @@ export interface Point {
 }
 
 /**
+ * Pointer capture that cannot throw.
+ *
+ * `setPointerCapture` rejects an id the browser no longer considers active — a pointer
+ * cancelled by the OS, a gesture interrupted mid-flight. Uncaught inside a React handler
+ * that kills the whole interaction, so a lost pointer degrades to "no capture" instead.
+ */
+export function capturePointer(el: Element | null | undefined, pointerId: number): void {
+  try {
+    el?.setPointerCapture(pointerId);
+  } catch {
+    /* pointer is already gone; nothing to capture */
+  }
+}
+
+export function releasePointer(el: Element | null | undefined, pointerId: number): void {
+  try {
+    el?.releasePointerCapture(pointerId);
+  } catch {
+    /* pointer is already gone; nothing to release */
+  }
+}
+
+/**
  * Horizontal separation between two pointers.
  *
  * Only the horizontal component matters: the Map view's price axis runs across, so a

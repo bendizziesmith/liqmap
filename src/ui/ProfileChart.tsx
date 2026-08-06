@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LiquidationProfile, ProfileBin } from '../engine/profile';
 import { TIER_COLORS } from '../engine/colormap';
-import { pinchAnchor, pinchFactor, spreadX, zoomDomain, type Point } from './gesture';
+import {
+  capturePointer,
+  pinchAnchor,
+  pinchFactor,
+  releasePointer,
+  spreadX,
+  zoomDomain,
+  type Point,
+} from './gesture';
 
 const AXIS_H = 20; // price labels under the plot
 const AXIS_W = 46; // cumulative labels on the right
@@ -294,7 +302,7 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
     (e: React.PointerEvent) => {
       if (!range) return;
       const rect = canvasRef.current!.getBoundingClientRect();
-      canvasRef.current?.setPointerCapture(e.pointerId);
+      capturePointer(canvasRef.current, e.pointerId);
       pointers.current.set(e.pointerId, { x: e.clientX - rect.left, y: e.clientY - rect.top });
 
       if (pointers.current.size === 2) {
@@ -374,7 +382,7 @@ export function ProfileChart({ title, subtitle, profile, loading, error, onExpor
   );
 
   const endPointer = useCallback((e: React.PointerEvent) => {
-    canvasRef.current?.releasePointerCapture?.(e.pointerId);
+    releasePointer(canvasRef.current, e.pointerId);
     pointers.current.delete(e.pointerId);
     if (pointers.current.size < 2) pinchRef.current = null;
     if (pointers.current.size === 0) dragRef.current = null;

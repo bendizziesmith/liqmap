@@ -5,6 +5,7 @@ import { computeVmax, normalizeScore } from '../engine/normalize';
 import { alphaFor, inferno, TIER_COLORS } from '../engine/colormap';
 import { lastColumn } from '../engine/profile';
 import { priceToY, yToPrice } from './scale';
+import { capturePointer, releasePointer } from './gesture';
 
 const AXIS_W = 62; // right-hand price gutter
 const AXIS_H = 22; // bottom time gutter
@@ -432,7 +433,7 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
       if (!view) return;
       const rect = canvasRef.current!.getBoundingClientRect();
       pointers.current.set(e.pointerId, { x: e.clientX - rect.left, y: e.clientY - rect.top });
-      canvasRef.current?.setPointerCapture(e.pointerId);
+      capturePointer(canvasRef.current, e.pointerId);
 
       if (pointers.current.size === 2) {
         const [a, b] = [...pointers.current.values()];
@@ -518,6 +519,7 @@ export function HeatmapCanvas({ map, enabledTiers, livePrice, interval, showProf
   );
 
   const endPointer = useCallback((e: React.PointerEvent) => {
+    releasePointer(canvasRef.current, e.pointerId);
     pointers.current.delete(e.pointerId);
     if (pointers.current.size < 2) pinchRef.current = null;
     if (pointers.current.size === 0) dragRef.current = null;
