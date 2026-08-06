@@ -125,6 +125,14 @@ export function HeatmapCanvas({
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [cursor, setCursor] = useState('crosshair');
   const [legend, setLegend] = useState<{ above: number[]; below: number[] } | null>(null);
+  /**
+   * The time ticks currently drawn, published for verification.
+   *
+   * Axis labels live in the canvas bitmap where nothing can read them back, so "the dates
+   * land on real boundaries and stay put across a pan" is otherwise only checkable by eye.
+   * Same hook the Map's brush window uses.
+   */
+  const [tickDebug, setTickDebug] = useState('');
   const mapRef = useRef(map);
   mapRef.current = map;
 
@@ -555,7 +563,13 @@ export function HeatmapCanvas({
       return lo + (t - cs[lo].start) / span;
     };
 
-    for (const tick of timeTicks(timeAtCol(view.c0), timeAtCol(view.c1), plot.w)) {
+    const ticks = timeTicks(timeAtCol(view.c0), timeAtCol(view.c1), plot.w);
+    setTickDebug((prev) => {
+      const next = ticks.map((t) => `${t.label}@${t.time}`).join('|');
+      return prev === next ? prev : next;
+    });
+
+    for (const tick of ticks) {
       const x = (colAtTime(tick.time) - view.c0) * colW;
       if (x < 0 || x > plot.w) continue;
 
@@ -795,6 +809,7 @@ export function HeatmapCanvas({
       <canvas
         ref={canvasRef}
         className="chart__canvas"
+        data-ticks={tickDebug || undefined}
         style={{ width: size.w, height: size.h, cursor }}
         onWheel={onWheel}
         onPointerDown={onPointerDown}
