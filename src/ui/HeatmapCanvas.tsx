@@ -810,6 +810,7 @@ export function HeatmapCanvas({
         ref={canvasRef}
         className="chart__canvas"
         data-ticks={tickDebug || undefined}
+        data-view={view ? `${view.p0},${view.p1},${view.c0},${view.c1}` : undefined}
         style={{ width: size.w, height: size.h, cursor }}
         onWheel={onWheel}
         onPointerDown={onPointerDown}
