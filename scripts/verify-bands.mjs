@@ -14,6 +14,10 @@ const BASE = process.argv[2] ?? 'https://liqmap.netlify.app/';
 const SYMBOL = process.argv[3] ?? 'XRPUSDT';
 const INTERVAL = process.argv[4] ?? '1d';
 const LABEL = process.argv[5] ?? 'now';
+// Band GEOMETRY is measured with smoothing off: the anti-aliased edges smoothing adds do
+// not match the exact class palette, so a colour-matching scan under-counts runs. The
+// aggregation decides band height; smoothing only softens edges.
+const SMOOTH = process.argv[6] !== 'crisp';
 
 /** Contiguous run statistics over the heat raster, by intensity threshold. */
 function measureBands() {
@@ -106,7 +110,7 @@ const browser = await puppeteer.launch({
 const page = await browser.newPage();
 await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
 await page.evaluateOnNewDocument(
-  (sym, iv) => {
+  (sym, iv, sm) => {
     localStorage.setItem('liqmap.view', JSON.stringify({
       symbol: sym, interval: iv, enabledTiers: [true, true, true, true],
       tab: 'heatmap', showProfile: true, colormap: 'inferno',
@@ -115,10 +119,10 @@ await page.evaluateOnNewDocument(
     // decay's own numbers move as new candles close.
     localStorage.setItem('liqmap.settings', JSON.stringify({
       alertMinScore: 70, alertDistancePct: 1.5, alertsEnabled: false,
-      levelDecay: false, smoothRendering: true,
+      levelDecay: false, smoothRendering: sm,
     }));
   },
-  SYMBOL, INTERVAL,
+  SYMBOL, INTERVAL, SMOOTH,
 );
 
 await page.goto(BASE, { waitUntil: 'domcontentloaded' });
@@ -145,6 +149,40 @@ for (const t of [1, 2, 3]) {
 console.log(`  clean background (no heat): ${(100 * m.unpaintedShare).toFixed(1)}%`);
 console.log('  tooltips (decay off):');
 for (const t of tips) console.log(`    ${t ? `${t.at}  ${t.head}  ${t.total}` : '(none)'}`);
+
+// Rendering must not touch the figures: toggle smoothing INSIDE this session and compare.
+// (Comparing across separate runs confounds rendering with live-data drift — the OI series
+// and the forming candle move between page loads.)
+const tipsAt = () => page.evaluate(async () => {
+  const cv = document.querySelector('.chart__canvas');
+  const r = cv.getBoundingClientRect();
+  const plotW = r.width - 62 - 90;
+  const plotH = r.height - 22;
+  const out = [];
+  for (const [fx, fy] of [[0.35, 0.3], [0.6, 0.55], [0.85, 0.72]]) {
+    cv.dispatchEvent(new PointerEvent('pointermove', {
+      pointerId: 6, clientX: r.left + plotW * fx, clientY: r.top + plotH * fy, bubbles: true, isPrimary: true }));
+    await new Promise((z) => setTimeout(z, 150));
+    const tip = document.querySelector('.tip');
+    const rows = tip ? [...tip.querySelectorAll('.tip__row')].map((n) => n.innerText.replace(/\s+/g, ' ').trim()) : [];
+    out.push(rows.find((x) => x.startsWith('total est.')) ?? '(none)');
+  }
+  return out;
+});
+const flipSmooth = () => page.evaluate(() => {
+  document.querySelector('button[aria-label="Settings"]')?.click();
+  const boxes = [...document.querySelectorAll('.drawer input[type="checkbox"]')];
+  boxes.find((b) => /Smooth rendering/.test(b.closest('label')?.textContent ?? ''))?.click();
+  document.querySelector('.drawer button[aria-label="Close settings"]')?.click();
+});
+const tipsA = await tipsAt();
+await flipSmooth();
+await new Promise((r) => setTimeout(r, 900));
+const tipsB = await tipsAt();
+await flipSmooth();
+await new Promise((r) => setTimeout(r, 900));
+const parity = tipsA.every((v, i) => v === tipsB[i]);
+console.log(`  smooth-toggle tooltip parity: ${parity ? 'IDENTICAL' : `DIFFER ${JSON.stringify({ tipsA, tipsB })}`}`);
 
 // Fully zoomed in, a single bucket must still be resolvable.
 await page.evaluate(async () => {

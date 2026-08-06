@@ -15,10 +15,12 @@
 /**
  * Shortest a display row is allowed to be.
  *
- * Two pixels is the point at which a band reads as a band rather than as a scratch, and it
- * is also the point below which a 1px row could be dropped entirely by fractional scaling.
+ * Three pixels is where a lone band reads as a band rather than as a scratch — measured on
+ * the live chart, a 2px minimum still left the median strong-band run at 2px, which is
+ * within one pixel of the noise this exists to remove. Anything below 2px can additionally
+ * be dropped outright by fractional scaling.
  */
-export const MIN_ROW_PX = 2;
+export const MIN_ROW_PX = 3;
 
 /**
  * How many rows to paint for `nBuckets` visible buckets across `heightPx` pixels.
