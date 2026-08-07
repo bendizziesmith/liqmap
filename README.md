@@ -214,8 +214,14 @@ to largest) rather than a fixed decade count — measured on BTCUSDT 4h the pool
 $2.3M–$51.2M, so a fixed 3-decade slider did nothing across its whole bottom half. Position
 0 is a true zero: "show all" is reachable, not merely approached.
 
-The filter runs on the shared band series, not per renderer, so the heatmap raster, the side
-panel and the Map hide exactly the same pools. The USD cut-off is converted to raw engine
+The filter applies to the **heatmap raster only**. The side panel and the Map profile always
+show the complete current book — they are the baseline the thinned heatmap is read against,
+and filtering them too would remove the reference that makes the thinning legible. Verified
+live: varying the threshold changes **zero** panel bar rows, against a control that drifts
+by more from elapsed time alone, while the heat area falls 566k → 29k pixels. `rasterCutoff`
+is the single place the threshold becomes a cutoff, and `ProfileChart` has no threshold prop
+at all, so the Map cannot filter even by mistake. Panel and Map tooltips are labelled
+`full book`; the heatmap's note says the view is filtered whenever a threshold is set. The USD cut-off is converted to raw engine
 units per side from a scale *snapshot* pinned to the dataset — a live OI-varying input in
 the paint would re-grade history on a tick and break the stability contract below. Each tier
 chip carries its est. USD among the visible, above-threshold pools, with a combined total,

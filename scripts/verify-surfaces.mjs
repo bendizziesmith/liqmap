@@ -73,7 +73,9 @@ const rows = await page.evaluate(async (nPoints) => {
     const lines = [...tip.querySelectorAll('.tip__row')].map((n) => n.innerText.replace(/\s+/g, ' ').trim());
     return {
       head: lines[0] ?? '',
-      total: (lines.find((s) => s.startsWith('total est.')) ?? '').replace('total est. ', ''),
+      // Just the amount: the panel and Map labels now name which book they read
+      // ("total est. · full book"), so the surrounding text differs by design.
+      total: (/\$[\d.]+[KMBT]?/.exec(lines.find((s) => s.startsWith('total est.')) ?? '') ?? [''])[0],
       tiers: lines.slice(1).filter((s) => /×/.test(s)),
     };
   };
