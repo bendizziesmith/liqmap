@@ -110,11 +110,16 @@ const rows = await page.evaluate(async (nPoints) => {
       const yMid = (auditView.yTop + ((r + 0.5) / auditView.rasterRows) * (auditView.yBot - auditView.yTop)) * dpr;
       const yy = Math.round(yMid);
       if (yy < 0 || yy >= cv.height - 22 * dpr) { barLen.push(0); continue; }
-      // Scan leftward from the axis edge: bars grow leftward from axisX.
+      // Scan leftward from the axis edge, counting TIER BAR colours only — the cumulative
+      // curves and their translucent fills also live in the strip and would smear the
+      // measurement toward wherever the curves are fat.
+      const BAR_RGB = [[106, 10, 104], [187, 55, 84], [249, 142, 9], [245, 219, 76], [252, 255, 164]];
+      const isBar = (k) => BAR_RGB.some((c) =>
+        Math.abs(img[k] - c[0]) <= 14 && Math.abs(img[k + 1] - c[1]) <= 14 && Math.abs(img[k + 2] - c[2]) <= 14);
       let len = 0;
       for (let x = Math.floor(axisX) - 2; x > plotW * dpr; x--) {
         const k = (yy * W + x) * 4;
-        if (img[k + 3] > 0 && !(img[k] < 20 && img[k + 1] < 22 && img[k + 2] < 30)) len++;
+        if (img[k + 3] > 0 && isBar(k)) len++;
       }
       barLen.push(len);
     }

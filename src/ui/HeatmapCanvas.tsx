@@ -668,9 +668,15 @@ export function HeatmapCanvas({
     for (let i = 0; i <= ticks; i++) {
       const price = view.p0 + ((view.p1 - view.p0) * i) / ticks;
       const y = toY(price);
-      if (livePrice != null && Math.abs(y - toY(livePrice)) < 12) continue;
-      ctx.fillStyle = 'rgba(148,163,184,0.9)';
-      ctx.fillText(formatPrice(price), axisX + 6, y);
+      // Skipping near the live price is about the LABEL colliding with the price tag in the
+      // gutter — the gridline itself must not be tied to the tick, or every price move that
+      // crosses the 12px threshold toggles a full-width row on and off (measured live as
+      // ~1,400 changed pixels across two rows in one 15s window).
+      const nearTag = livePrice != null && Math.abs(y - toY(livePrice)) < 12;
+      if (!nearTag) {
+        ctx.fillStyle = 'rgba(148,163,184,0.9)';
+        ctx.fillText(formatPrice(price), axisX + 6, y);
+      }
       ctx.strokeStyle = 'rgba(148,163,184,0.10)';
       ctx.beginPath();
       ctx.moveTo(0, y + 0.5);
