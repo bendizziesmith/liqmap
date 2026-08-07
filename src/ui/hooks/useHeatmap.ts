@@ -44,6 +44,7 @@ export function useHeatmap(
   interval: Interval,
   nonce: number,
   decay = false,
+  wickRetention = 0,
 ): HeatmapState {
   const [candles, setCandles] = useState<Candle[]>([]);
   const [oi, setOi] = useState<Parameters<typeof buildHeatmap>[1]>([]);
@@ -149,8 +150,9 @@ export function useHeatmap(
    * the existing matrices — it is a full rebuild by definition.
    */
   const map = useMemo(
-    () => (candles.length > 0 ? buildHeatmap(candles, oi, interval, { decay }) : null),
-    [candles, oi, interval, decay],
+    () =>
+      candles.length > 0 ? buildHeatmap(candles, oi, interval, { decay, wickRetention }) : null,
+    [candles, oi, interval, decay, wickRetention],
   );
 
   return {

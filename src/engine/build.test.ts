@@ -406,3 +406,68 @@ describe('open interest participation', () => {
     expect(valueAt(rising, 0, 1, b)).toBeGreaterThan(valueAt(flat, 0, 1, b));
   });
 });
+
+describe('wick clearing in the walk', () => {
+  const history = [
+    candle(0, 100, 103, 97, 101, 900_000),
+    candle(1, 101, 108, 99, 107, 1_400_000),
+    candle(2, 107, 110, 92, 94, 2_100_000),
+    candle(3, 94, 99, 88, 97, 700_000),
+  ];
+
+  it('is byte-identical to the default build at retention 0', () => {
+    const base = buildHeatmap(history, [], '4h');
+    const full = buildHeatmap(history, [], '4h', { wickRetention: 0 });
+    for (let t = 0; t < base.tiers.length; t++) {
+      expect(Array.from(full.matrices[t])).toEqual(Array.from(base.matrices[t]));
+    }
+  });
+
+  it('keeps exactly the retention share of a level swept only by a wick', () => {
+    // Candle 0 (doji at 100) seeds a 10x long liq at 90. Candle 1's wick [88, 94) reaches
+    // it; its body [94, 97] does not. Nothing re-seeds near 90: candle 1's own 10x long
+    // levels sit at 84.6/89.1/79.2... — 89.1! Too close. Use 25x: liq at 96 * ... pick a
+    // tier/level pair no later deposit collides with: candle 0's 5x long liq at 80.
+    const doji = candle(0, 100, 100, 100, 100, 1_000_000);
+    const sweep = { ...candle(1, 100, 101, 79, 100, 0), start: H }; // zero turnover: clears, seeds nothing
+    const partial = buildHeatmap([doji, sweep], [], '4h', { wickRetention: 0.5 });
+    const full = buildHeatmap([doji, sweep], [], '4h', { wickRetention: 0 });
+
+    const ti = partial.tiers.indexOf(5);
+    const b = priceToBucket(partial.grid, longLiqPrice(100, 5)); // 80, inside the wick [79, 100)
+    const seeded = valueAt(partial, ti, 0, b);
+    expect(seeded).toBeGreaterThan(0);
+    expect(valueAt(partial, ti, 1, b)).toBeCloseTo(seeded * 0.5, 3);
+    expect(valueAt(full, ti, 1, b)).toBe(0);
+  });
+
+  it('still zeroes levels the body settles through', () => {
+    const doji = candle(0, 100, 100, 100, 100, 1_000_000);
+    // Body travels 100 -> 79: the 5x long liq at 80 is INSIDE the body span.
+    const drop = { ...candle(1, 100, 101, 79, 79, 0), start: H };
+    const partial = buildHeatmap([doji, drop], [], '4h', { wickRetention: 0.75 });
+    const ti = partial.tiers.indexOf(5);
+    expect(valueAt(partial, ti, 1, priceToBucket(partial.grid, longLiqPrice(100, 5)))).toBe(0);
+  });
+
+  it('keeps reseedLast consistent with a full rebuild under partial clearing', () => {
+    const map = buildHeatmap(history, [], '4h', { wickRetention: 0.5 });
+    const moved = { ...history[3], close: 96.2 };
+    const incremental = reseedLast(map, moved);
+    const rebuilt = buildHeatmap([...history.slice(0, 3), moved], [], '4h', { wickRetention: 0.5 });
+    const offset = (map.nCols - 1) * map.grid.nBuckets;
+    for (let t = 0; t < map.tiers.length; t++) {
+      for (let b = 0; b < map.grid.nBuckets; b++) {
+        expect(incremental.matrices[t][offset + b]).toBeCloseTo(rebuilt.matrices[t][offset + b], 3);
+      }
+    }
+  });
+
+  it('conserves seeded turnover when nothing is swept, retention notwithstanding', () => {
+    const only = candle(0, 100, 115, 90, 104, 5_000_000);
+    const map = buildHeatmap([only], [], '4h', { wickRetention: 0.5 });
+    let total = 0;
+    for (const m of map.matrices) for (const v of m) total += v;
+    expect(total).toBeCloseTo(only.turnover, 0);
+  });
+});

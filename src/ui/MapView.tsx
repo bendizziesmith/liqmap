@@ -19,6 +19,8 @@ interface Props {
   openInterestValue: number;
   /** Age unswept levels out. Must match the heatmap tab, or the two tabs disagree. */
   decay: boolean;
+  /** Wick retention fraction; must also match the heatmap tab. */
+  wickRetention: number;
 }
 
 /** Trigger a client-side download. No server round trip, so it works offline too. */
@@ -40,8 +42,9 @@ function useMode(
   nonce: number,
   oiValue: number,
   decay: boolean,
+  wickRetention: number,
 ) {
-  const { map, loading, error } = useHeatmap(symbol, interval, nonce, decay);
+  const { map, loading, error } = useHeatmap(symbol, interval, nonce, decay, wickRetention);
 
   const profile = useMemo(() => {
     if (!map || map.nCols === 0) return null;
@@ -77,9 +80,10 @@ export function MapView({
   colormapId,
   openInterestValue,
   decay,
+  wickRetention,
 }: Props) {
-  const scalp = useMode(symbol, MAP_SCALP_INTERVAL, livePrice, nonce, openInterestValue, decay);
-  const swing = useMode(symbol, MAP_SWING_INTERVAL, livePrice, nonce, openInterestValue, decay);
+  const scalp = useMode(symbol, MAP_SCALP_INTERVAL, livePrice, nonce, openInterestValue, decay, wickRetention);
+  const swing = useMode(symbol, MAP_SWING_INTERVAL, livePrice, nonce, openInterestValue, decay, wickRetention);
 
   const exportMode = useCallback(
     (mode: 'scalping' | 'swing', interval: Interval, profile: typeof scalp.profile, scale: UsdScales) => {
@@ -101,7 +105,7 @@ export function MapView({
         formatPrice={formatPrice}
         colormapId={colormapId}
         usdScale={scalp.usdScale}
-        datasetKey={`${symbol}:${MAP_SCALP_INTERVAL}:${nonce}:${decay}`}
+        datasetKey={`${symbol}:${MAP_SCALP_INTERVAL}:${nonce}:${decay}:${wickRetention}`}
       />
 
       <ProfileChart
@@ -114,7 +118,7 @@ export function MapView({
         formatPrice={formatPrice}
         colormapId={colormapId}
         usdScale={swing.usdScale}
-        datasetKey={`${symbol}:${MAP_SWING_INTERVAL}:${nonce}:${decay}`}
+        datasetKey={`${symbol}:${MAP_SWING_INTERVAL}:${nonce}:${decay}:${wickRetention}`}
       />
 
       <p className="map__help">

@@ -2,7 +2,7 @@ import type { BuildOptions, Candle, HeatmapData, Interval, OiPoint } from './typ
 import { buildGrid, N_BUCKETS } from './grid';
 import { modeForInterval, tiersForMode } from './tiers';
 import { oiFactors } from './oi';
-import { clearRange, seedCandle } from './seed';
+import { clearCandle, seedCandle } from './seed';
 import { applyDecay, floorSparse, tierDecayFactors } from './decay';
 
 /** Read one cell out of a tier matrix. */
@@ -42,6 +42,7 @@ export function buildHeatmap(
   const matrices = tiers.map(() => new Float32Array(nCols * N_BUCKETS));
   const emptyBaseline = () => tiers.map(() => new Float32Array(N_BUCKETS));
   const decayFactors = options.decay ? tierDecayFactors(mode, tiers, interval) : null;
+  const wickRetention = options.wickRetention ?? 0;
 
   if (nCols === 0) {
     return {
@@ -53,6 +54,7 @@ export function buildHeatmap(
       candles,
       baseline: emptyBaseline(),
       lastOiFactor: 1,
+      wickRetention,
       decayFactors,
     };
   }
@@ -73,7 +75,7 @@ export function buildHeatmap(
     }
 
     if (decayFactors) applyDecay(levels, decayFactors);
-    clearRange(levels, grid, candle.low, candle.high);
+    clearCandle(levels, grid, candle, wickRetention);
     seedCandle(levels, grid, tiers, candle, factors[i]);
     if (decayFactors) floorSparse(levels);
 
@@ -92,6 +94,7 @@ export function buildHeatmap(
     candles,
     baseline,
     lastOiFactor: factors[nCols - 1],
+    wickRetention,
     decayFactors,
   };
 }
@@ -112,7 +115,7 @@ export function reseedLast(map: HeatmapData, candle: Candle): HeatmapData {
 
   const levels = map.baseline.map((l) => l.slice());
   if (map.decayFactors) applyDecay(levels, map.decayFactors);
-  clearRange(levels, map.grid, candle.low, candle.high);
+  clearCandle(levels, map.grid, candle, map.wickRetention);
   seedCandle(levels, map.grid, map.tiers, candle, map.lastOiFactor);
   if (map.decayFactors) floorSparse(levels);
 

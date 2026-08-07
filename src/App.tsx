@@ -7,6 +7,7 @@ import { priceToBucket } from './engine/grid';
 import { calibrationScales, sumActiveSides } from './engine/calibrate';
 import { scaleBandsTo100 } from './engine/alerts';
 import { BAND_WINDOW_PCT, DEFAULT_SETTINGS, DEFAULT_VIEW, PRESET_SYMBOLS, type Tab } from './config';
+import { WICK_RETENTION } from './engine/seed';
 import { HeatmapCanvas } from './ui/HeatmapCanvas';
 import { MapView } from './ui/MapView';
 import { Toolbar } from './ui/Toolbar';
@@ -39,7 +40,14 @@ export default function App() {
   const narrow = useMedia('(max-width: 720px)');
   const profileVisible = showProfile && !narrow;
 
-  const fetched = useHeatmap(symbol, interval, nonce + closedNonce, settings.levelDecay);
+  const wickRetention = settings.wickClearing === 'partial' ? WICK_RETENTION : 0;
+  const fetched = useHeatmap(
+    symbol,
+    interval,
+    nonce + closedNonce,
+    settings.levelDecay,
+    wickRetention,
+  );
   const { loadOlder, loadingOlder, prependedCount } = fetched;
 
   // A custom symbol joins the live feed and the watchlist strip alongside the presets.
@@ -67,7 +75,7 @@ export default function App() {
   useEffect(() => {
     if (candleClosed > 0) setClosedNonce((n) => n + 1);
   }, [candleClosed]);
-  const watchBands = useWatchlist(symbols, interval, settings.levelDecay);
+  const watchBands = useWatchlist(symbols, interval, settings.levelDecay, wickRetention);
   const livePrice = prices[symbol] ?? map?.candles.at(-1)?.close ?? null;
 
   /** Bands of the focused symbol's latest column, honouring the tier toggles. */
@@ -161,6 +169,7 @@ export default function App() {
             colormapId={colormap}
             openInterestValue={openInterest[symbol] ?? 0}
             decay={settings.levelDecay}
+            wickRetention={wickRetention}
           />
         )}
       </main>

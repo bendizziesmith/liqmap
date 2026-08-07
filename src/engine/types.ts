@@ -51,6 +51,8 @@ export interface HeatmapData {
   baseline: Float32Array[];
   /** OI factor applied to the final candle, reused when that candle is re-seeded live. */
   lastOiFactor: number;
+  /** Wick retention the walk was built with, reused when the forming candle re-seeds. */
+  wickRetention: number;
   /**
    * Per-tier survival factor applied once per candle, or `null` when decay is off.
    *
@@ -69,6 +71,12 @@ export interface BuildOptions {
    * positions close without ever being liquidated, so old levels are ghosts.
    */
   decay?: boolean;
+  /**
+   * Fraction of a wick-only-swept level that survives (0 = full clearing, today's rule).
+   *
+   * Candle bodies always clear fully; this softens only what a spike wicked through.
+   */
+  wickRetention?: number;
 }
 
 /** A contiguous run of high-score buckets, used by the watchlist and alerts. */

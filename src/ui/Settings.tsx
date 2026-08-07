@@ -84,6 +84,28 @@ export function Settings({
             the raw clearing-only book.
           </span>
 
+          <div className="field">
+            <span className="field__label">Wick clearing</span>
+            <div className="seg" role="group" aria-label="Wick clearing">
+              {(['partial', 'full'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className="seg__btn"
+                  aria-pressed={values.wickClearing === mode}
+                  onClick={() => onChange({ wickClearing: mode })}
+                >
+                  {mode === 'partial' ? 'Partial' : 'Full'}
+                </button>
+              ))}
+            </div>
+            <span className="field__hint">
+              A fast wick doesn't liquidate every position it touches — exchanges use mark
+              price, and traders add margin. Partial keeps half of what only a wick swept;
+              candle bodies always clear fully. Full is the strict original rule.
+            </span>
+          </div>
+
           <label className="field field--row">
             <input
               type="checkbox"

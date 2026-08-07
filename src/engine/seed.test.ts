@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { clearRange, seedCandle } from './seed';
+import { clearCandle, clearRange, seedCandle } from './seed';
 import { buildGrid, priceToBucket, N_BUCKETS } from './grid';
 import { CAPITAL_SPLIT, ANCHOR_WEIGHTS, longLiqPrice, shortLiqPrice } from './tiers';
 import type { Candle } from './types';
@@ -245,5 +245,85 @@ describe('the seed kernel', () => {
       expect(totals[t] / grand).toBeCloseTo(CAPITAL_SPLIT[t], 5);
     }
     expect(ANCHOR_WEIGHTS.close).toBe(0.45);
+  });
+});
+
+describe('clearCandle — wick-vs-body clearing', () => {
+  const mk = () => TIERS.map(() => new Float32Array(N_BUCKETS));
+  const grid = buildGrid([candle(100, 200, 100, 200)], 3);
+
+  it('zeroes body-swept levels regardless of retention', () => {
+    const levels = mk();
+    levels.forEach((l) => l.fill(8));
+    // Body [140, 160], wicks [120, 140) and (160, 180].
+    clearCandle(levels, grid, candle(140, 180, 120, 160), 0.5);
+    for (const l of levels) {
+      expect(l[priceToBucket(grid, 150)]).toBe(0);
+      expect(l[priceToBucket(grid, 141)]).toBe(0);
+      expect(l[priceToBucket(grid, 159)]).toBe(0);
+    }
+  });
+
+  it('retains exactly WICK_RETENTION of a wick-swept level', () => {
+    const levels = mk();
+    levels.forEach((l) => l.fill(8));
+    clearCandle(levels, grid, candle(140, 180, 120, 160), 0.5);
+    for (const l of levels) {
+      expect(l[priceToBucket(grid, 125)]).toBeCloseTo(4, 6); // lower wick
+      expect(l[priceToBucket(grid, 175)]).toBeCloseTo(4, 6); // upper wick
+    }
+  });
+
+  it('leaves levels outside the candle range untouched', () => {
+    const levels = mk();
+    levels.forEach((l) => l.fill(8));
+    clearCandle(levels, grid, candle(140, 180, 120, 160), 0.5);
+    for (const l of levels) {
+      expect(l[priceToBucket(grid, 119) - 1]).toBe(8);
+      expect(l[priceToBucket(grid, 181) + 1]).toBe(8);
+    }
+  });
+
+  it('compounds across repeated wick sweeps, which is what makes it honest', () => {
+    const levels = mk();
+    levels[0][priceToBucket(grid, 125)] = 16;
+    const c = candle(140, 180, 120, 160);
+    clearCandle(levels, grid, c, 0.5);
+    clearCandle(levels, grid, c, 0.5);
+    expect(levels[0][priceToBucket(grid, 125)]).toBeCloseTo(4, 6); // 16 * 0.5^2
+  });
+
+  it('reproduces clearRange bit-for-bit at retention 0 (full clearing)', () => {
+    const a = mk();
+    const b = mk();
+    for (const arr of [...a, ...b]) {
+      for (let i = 0; i < N_BUCKETS; i++) arr[i] = (i * 2654435761) % 977 / 31;
+    }
+    const c = candle(133.7, 171.2, 118.9, 152.4);
+    clearRange(a, grid, c.low, c.high);
+    clearCandle(b, grid, c, 0);
+    for (let t = 0; t < a.length; t++) {
+      expect(Array.from(b[t])).toEqual(Array.from(a[t]));
+    }
+  });
+
+  it('never creates mass — the total can only fall', () => {
+    const levels = mk();
+    levels.forEach((l) => l.fill(3));
+    const before = levels.reduce((s, l) => s + l.reduce((x, y) => x + y, 0), 0);
+    clearCandle(levels, grid, candle(140, 180, 120, 160), 0.75);
+    const after = levels.reduce((s, l) => s + l.reduce((x, y) => x + y, 0), 0);
+    expect(after).toBeLessThan(before);
+  });
+
+  it('handles a doji (no body span beyond one bucket) without touching the wick rule', () => {
+    const levels = mk();
+    levels.forEach((l) => l.fill(6));
+    clearCandle(levels, grid, candle(150, 170, 130, 150), 0.5);
+    for (const l of levels) {
+      expect(l[priceToBucket(grid, 150)]).toBe(0); // the open==close bucket is body
+      expect(l[priceToBucket(grid, 135)]).toBeCloseTo(3, 6);
+      expect(l[priceToBucket(grid, 165)]).toBeCloseTo(3, 6);
+    }
   });
 });

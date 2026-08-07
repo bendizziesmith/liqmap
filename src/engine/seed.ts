@@ -1,6 +1,20 @@
 import type { Candle, Grid } from './types';
+
 import { priceToBucket, rangeToBuckets } from './grid';
 import { ANCHOR_WEIGHTS, CAPITAL_SPLIT, longLiqPrice, shortLiqPrice } from './tiers';
+/**
+ * Share of a wick-swept level that survives under partial wick clearing.
+ *
+ * Exchanges liquidate on mark price, not last trade, so a fast wick does not take out every
+ * position resting in it; nor does it fill every stop, and traders top up margin as price
+ * approaches. Clearing the full candle range treats a three-minute spike exactly like
+ * settled trading, which overstates what a spike removes — measured on XRPUSDT 4h, 85% of
+ * everything ever cleared out of the [0.98, 1.03] band was removed by wick, two thirds of
+ * it by one candle (Jun 25 12:00, open 1.0714, low 1.0111). Bodies still clear fully:
+ * price SETTLING through a level is the model's whole premise.
+ */
+export const WICK_RETENTION = 0.5;
+
 
 /**
  * Erase every level the candle traded through.
@@ -43,6 +57,36 @@ function deposit(tierLevels: Float32Array, grid: Grid, price: number, amount: nu
     const b = centre + k - 1;
     const clamped = b < 0 ? 0 : b >= grid.nBuckets ? grid.nBuckets - 1 : b;
     tierLevels[clamped] += amount * KERNEL[k];
+  }
+}
+
+/**
+ * Erase what one candle traded through, at wick strength where only the wick reached.
+ *
+ * The candle BODY [min(open, close), max(open, close)] clears to zero exactly as
+ * `clearRange` does. The wick-only spans multiply by `wickRetention` instead: 0 reproduces
+ * full clearing bit-for-bit (v * 0 === 0 for every finite float), and repeated wick sweeps
+ * compound, so a level wicked three times at 0.5 keeps an eighth — surviving a spike is
+ * evidence, surviving many is a claim that weakens each time.
+ */
+export function clearCandle(
+  levels: Float32Array[],
+  grid: Grid,
+  candle: Candle,
+  wickRetention: number,
+): void {
+  if (!(wickRetention > 0)) {
+    clearRange(levels, grid, candle.low, candle.high);
+    return;
+  }
+
+  const [lo, hi] = rangeToBuckets(grid, candle.low, candle.high);
+  const [bodyLo, bodyHi] = rangeToBuckets(grid, candle.open, candle.close);
+
+  for (const tier of levels) {
+    for (let b = lo; b < bodyLo; b++) tier[b] *= wickRetention;
+    tier.fill(0, bodyLo, bodyHi + 1);
+    for (let b = bodyHi + 1; b <= hi; b++) tier[b] *= wickRetention;
   }
 }
 

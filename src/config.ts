@@ -26,6 +26,20 @@ export interface Settings {
    * bucket edges read as deliberate structure the data does not actually have.
    */
   smoothRendering: boolean;
+  /**
+   * How a candle's wick clears resting levels.
+   *
+   * 'full' erases everything the candle range touched — the original rule, and the default.
+   * 'partial' still erases the body span but keeps half of what only the wick reached:
+   * exchanges liquidate on mark price, a spike does not fill every resting position, and
+   * traders add margin. Measured on XRPUSDT 4h, 85% of everything cleared out of the
+   * [0.98, 1.03] band went by wick — two thirds in one Jun-25 candle — but the parameter
+   * sweep in docs/tuning-notes.md showed retention recovers too little of that band to
+   * change its rank (0.59% -> 0.73% of book at 0.5, decay on), because decay ages whatever
+   * a wick spares. Full stays the default until a knob actually moves the ranking; partial
+   * is kept for comparison.
+   */
+  wickClearing: 'full' | 'partial';
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -34,6 +48,7 @@ export const DEFAULT_SETTINGS: Settings = {
   alertsEnabled: false,
   levelDecay: true,
   smoothRendering: true,
+  wickClearing: 'full',
 };
 
 export type Tab = 'heatmap' | 'map';
