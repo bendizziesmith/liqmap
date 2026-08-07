@@ -4,10 +4,12 @@ Side-by-side crops of the reference liquidation tool go here, named
 `<symbol>-<interval>-<date>.png` (e.g. `xrpusdt-4h-2026-08-07.png`), next to our own
 captures of the same symbol/timeframe taken the same day (`ours-...`).
 
-No reference crop is checked in yet — the comparison in `../tuning-notes.md` was made
-against the two features named in the task brief (the heavy band just below 1.00–1.02 and
-the 0.90–0.95 shelf). Our own captures for the same day are here so the pair is complete
-the moment the crop lands.
+`td-xrpusdt-4h-swing-2026-08-06.png` is the reference: Trading Different,
+BINANCE/XRPUSDT, Swing 3×/5×/10×/25× — the SAME ladder as ours — captured Aug 6 ~18:00
+at their price 1.0449, cumulative longs 236.3M, tooltip at 0.9500 reading just $0.61M.
+`ours-xrpusdt-4h-wick-full-decay-{on,off}-2026-08-07.png` are the matching captures at
+the shipped defaults; note they are post-Aug-7-wick while the crop is pre-wick (see
+../tuning-notes.md, timing caveat).
 
 Comparisons are about cluster PRICES and relative ranking only: the reference runs on a
 different venue with an undisclosed model, so colours and units are not comparable.
