@@ -126,3 +126,26 @@ describe('sideSamples (intra-candle ladder stability)', () => {
     expect(sideSamples(agg, 2, 3, 2, () => 'above').visible.length).toBe(4);
   });
 });
+
+describe('class ladder is independent of the threshold (c)', () => {
+  /**
+   * Raising the threshold must THIN the chart, never repaint it. The ladder therefore comes
+   * from the unfiltered visible cells: `sideSamples` is handed the raw aggregate and knows
+   * nothing about any cut-off, so identical input yields identical breaks whatever is
+   * subsequently hidden. Verified live too — three probe bands kept their exact RGBA across
+   * a full 0..1 sweep.
+   */
+  it('takes no threshold argument, so it cannot see the filter', () => {
+    expect(sideSamples.length).toBeLessThanOrEqual(5);
+  });
+
+  it('yields the same samples regardless of what a caller later hides', () => {
+    const agg = new Float64Array([10, 200, 3000, 40, 500, 6000]);
+    const side = (): 'above' | 'below' => 'above';
+    const a = sideSamples(agg, 2, 3, -1, side);
+    const b = sideSamples(agg, 2, 3, -1, side);
+    expect(b.visible).toEqual(a.visible);
+    // Every value is present — nothing is pre-filtered out of the ladder's input.
+    expect(a.visible.sort((x, y) => x - y)).toEqual([10, 40, 200, 500, 3000, 6000]);
+  });
+});

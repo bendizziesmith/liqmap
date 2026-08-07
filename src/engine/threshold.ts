@@ -93,3 +93,40 @@ export function minBandUsd(bands: Array<{ usd: number }>): number {
   for (const b of bands) if (b.usd > 0 && b.usd < min) min = b.usd;
   return Number.isFinite(min) ? min : 0;
 }
+
+/**
+ * Threshold that hides the smallest `p` share of pools.
+ *
+ * Pool values are heavily skewed — a handful of very large levels and a long tail of small
+ * ones — so mapping slider travel to an absolute USD amount, even logarithmically, spends
+ * most of the control in a region where nothing visibly changes. Measured live on BTCUSDT
+ * 4h, ten equal steps of the USD slider removed [1,0,0,2,8,12,18,19,11,37] of 108 pools:
+ * two steps did nothing at all and the last discarded a third of the book in one nudge.
+ *
+ * Mapping travel to the PERCENTILE of pool values makes sensitivity uniform by
+ * construction: half-travel hides the smallest half, whatever shape the distribution has.
+ * The resulting USD figure is still shown as text, so the number stays legible.
+ *
+ * `sorted` must be the non-empty pool values, ascending.
+ */
+export function poolQuantile(sorted: number[], p: number): number {
+  const n = sorted.length;
+  if (n === 0 || !(p > 0)) return 0;
+  if (p >= 1) return sorted[n - 1];
+  return sorted[Math.min(n - 1, Math.floor(p * n))];
+}
+
+/** Inverse of `poolQuantile`: the share of pools a given threshold hides. */
+export function quantileOfUsd(sorted: number[], usd: number): number {
+  const n = sorted.length;
+  if (n === 0 || !(usd > 0)) return 0;
+  // First index whose value survives the threshold; everything before it is hidden.
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid] >= usd) hi = mid;
+    else lo = mid + 1;
+  }
+  return Math.min(1, lo / n);
+}

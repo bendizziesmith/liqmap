@@ -4,6 +4,8 @@ import {
   filterBands,
   maxBandUsd,
   minBandUsd,
+  poolQuantile,
+  quantileOfUsd,
   sliderToUsd,
   usdToSlider,
   type VisibleBand,
@@ -186,5 +188,84 @@ describe('log span anchored to the real pool range', () => {
     expect(minBandUsd(SERIES)).toBe(12_000);
     expect(minBandUsd([])).toBe(0);
     expect(minBandUsd([band(0, [0])])).toBe(0);
+  });
+});
+
+describe('percentile mapping (uniform sensitivity)', () => {
+  /** A realistically skewed book: many small pools, a few very large. */
+  const skewed = Array.from({ length: 100 }, (_, i) => Math.round(1e6 * Math.pow(1.06, i)));
+  const sorted = [...skewed].sort((a, b) => a - b);
+
+  it('shows everything at position 0', () => {
+    expect(poolQuantile(sorted, 0)).toBe(0);
+  });
+
+  it('hides the smallest half at position 0.5', () => {
+    const t = poolQuantile(sorted, 0.5);
+    expect(sorted.filter((v) => v >= t)).toHaveLength(50);
+  });
+
+  it('hides the smallest 80% at position 0.8', () => {
+    const t = poolQuantile(sorted, 0.8);
+    expect(sorted.filter((v) => v >= t)).toHaveLength(20);
+  });
+
+  it('keeps exactly the largest pool at position 1 — never an empty chart', () => {
+    const t = poolQuantile(sorted, 1);
+    expect(sorted.filter((v) => v >= t)).toHaveLength(1);
+  });
+
+  it('removes a near-constant share of pools per step, which absolute USD did not', () => {
+    // Measured on the live absolute-USD slider, ten equal steps dropped
+    // [1,0,0,2,8,12,18,19,11,37] of 108 pools: two steps did nothing and the last threw
+    // away a third of the book. Percentile travel must be flat by construction.
+    const survivors: number[] = [];
+    for (let i = 0; i <= 10; i++) {
+      const t = poolQuantile(sorted, i / 10);
+      survivors.push(sorted.filter((v) => v >= t).length);
+    }
+    const drops = survivors.slice(1).map((s, i) => survivors[i] - s);
+    expect(drops.filter((d) => d === 0)).toHaveLength(0);
+    // Every step removes within one pool of a tenth of the book.
+    for (const d of drops.slice(0, -1)) expect(Math.abs(d - 10)).toBeLessThanOrEqual(1);
+  });
+
+  it('is monotonic, so dragging right never lowers the threshold', () => {
+    let prev = -1;
+    for (let i = 0; i <= 20; i++) {
+      const t = poolQuantile(sorted, i / 20);
+      expect(t).toBeGreaterThanOrEqual(prev);
+      prev = t;
+    }
+  });
+
+  it('round-trips a threshold back to its position', () => {
+    for (const p of [0.1, 0.25, 0.5, 0.75, 0.9]) {
+      const usd = poolQuantile(sorted, p);
+      expect(Math.abs(quantileOfUsd(sorted, usd) - p)).toBeLessThanOrEqual(0.011);
+    }
+  });
+
+  it('handles ties without claiming to hide pools it cannot', () => {
+    const flat = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5];
+    // Every pool is identical, so any threshold at or below 5 keeps all ten.
+    expect(flat.filter((v) => v >= poolQuantile(flat, 0.5))).toHaveLength(10);
+  });
+
+  it('survives an empty or single-pool book', () => {
+    expect(poolQuantile([], 0.5)).toBe(0);
+    expect(poolQuantile([], 1)).toBe(0);
+    expect(poolQuantile([42], 1)).toBe(42);
+    expect(quantileOfUsd([], 100)).toBe(0);
+  });
+
+  it('clamps positions outside 0..1', () => {
+    expect(poolQuantile(sorted, -1)).toBe(0);
+    expect(poolQuantile(sorted, 5)).toBe(sorted[sorted.length - 1]);
+  });
+
+  it('puts a threshold above every pool at the top of the travel', () => {
+    expect(quantileOfUsd(sorted, sorted[sorted.length - 1] * 10)).toBe(1);
+    expect(quantileOfUsd(sorted, 0)).toBe(0);
   });
 });

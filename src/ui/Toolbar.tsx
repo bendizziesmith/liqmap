@@ -4,7 +4,7 @@ import type { Tab } from '../config';
 import { INTERVALS, PRESET_SYMBOLS } from '../config';
 import { TIER_COLORS } from '../engine/colormap';
 import { formatUsd } from '../engine/usd';
-import { sliderToUsd, usdToSlider } from '../engine/threshold';
+import { poolQuantile, quantileOfUsd } from '../engine/threshold';
 import { PanelIcon, RefreshIcon, SettingsIcon } from './icons';
 
 interface Props {
@@ -26,7 +26,7 @@ interface Props {
   minUsd: number;
   onMinUsd: (v: number) => void;
   /** Live stats for the visible, above-threshold bands. */
-  stats: { maxUsd: number; minUsd: number; count: number; tiers: number[]; total: number };
+  stats: { sorted: number[]; count: number; tiers: number[]; total: number };
 }
 
 export function Toolbar({
@@ -167,11 +167,11 @@ export function Toolbar({
               min={0}
               max={1}
               step={0.001}
-              value={usdToSlider(minUsd, stats.maxUsd, stats.minUsd)}
-              disabled={stats.maxUsd <= 0}
-              onChange={(e) => onMinUsd(sliderToUsd(Number(e.target.value), stats.maxUsd, stats.minUsd))}
+              value={quantileOfUsd(stats.sorted, minUsd)}
+              disabled={stats.sorted.length === 0}
+              onChange={(e) => onMinUsd(poolQuantile(stats.sorted, Number(e.target.value)))}
               aria-valuetext={minUsd > 0 ? `${formatUsd(minUsd)} minimum` : 'showing all pools'}
-              title="Show only pools whose total is equal or greater than this value"
+              title="Hide the smallest pools. Half-way hides the smaller half; the readout shows the resulting est. USD cut-off."
             />
             <span className="thresh__readout">
               <b>{minUsd > 0 ? formatUsd(minUsd) : 'All'}</b>
