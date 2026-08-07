@@ -122,9 +122,16 @@ for (let i = 0; i <= 10; i++) {
   if (i === 0) base = s.colours;
   const drop = rows.length ? rows[rows.length - 1].pools - s.pools : 0;
   rows.push({ pos, ...s });
-  const stable = s.pools > 0 ? s.colours.every((c, j) => c === base[j]) : '(empty)';
+  /*
+   * Only probes that are still PAINTED can be compared. A probe the threshold has hidden
+   * reads as fully transparent, which is the filter doing its job — counting that as a
+   * recolour would fail the very behaviour under test.
+   */
+  const painted = s.colours.map((c, j) => [c, base[j]]).filter(([c]) => !c.endsWith(',0'));
+  const stable = painted.length === 0 ? '(all hidden)' : painted.every(([c, b0]) => c === b0);
   console.log(
-    `  ${pos.toFixed(1)}   ${s.threshold.padEnd(12)} ${String(s.pools).padStart(5)}  ${String(drop).padStart(5)}   ${stable === true ? 'stable' : stable === '(empty)' ? '(empty)' : `CHANGED ${JSON.stringify(s.colours)}`}`,
+    `  ${pos.toFixed(1)}   ${s.threshold.padEnd(12)} ${String(s.pools).padStart(5)}  ${String(drop).padStart(5)}   ` +
+      `${stable === true ? `stable (${painted.length} painted)` : stable === '(all hidden)' ? '(all hidden)' : `CHANGED ${JSON.stringify(s.colours)}`}`,
   );
 }
 
@@ -136,7 +143,8 @@ console.log('-'.repeat(78));
 console.log(`  segments with ZERO effect      : ${flat} / ${drops.length}`);
 console.log(`  biggest single-segment drop    : ${maxDrop} pools (${((100 * maxDrop) / rows[0].pools).toFixed(0)}% of all)`);
 console.log(`  drops per segment              : ${JSON.stringify(drops)}`);
-console.log(`  colour stability across sweep  : ${rows.filter((r) => r.pools > 0).every((r) => r.colours.every((c, j) => c === base[j])) ? 'PASS — survivors keep their colour' : 'FAIL — survivors recoloured'}`);
+const stillPainted = rows.flatMap((r) => r.colours.map((c, j) => [c, base[j]]).filter(([c]) => !c.endsWith(',0')));
+console.log(`  colour stability across sweep  : ${stillPainted.every(([c, b0]) => c === b0) ? `PASS — all ${stillPainted.length} painted probe samples kept their exact colour` : 'FAIL — survivors recoloured'}`);
 
 // (d) responsiveness: does an `input` alone (no `change`) move the readout?
 await setSlider(0);
