@@ -132,7 +132,10 @@ for (const s of states) {
   console.log(`\n[${s.label}]`);
   console.log(`  build id in Settings   : ${s.id}`);
   console.log(`  blur share             : ${(100 * s.blurShare).toFixed(2)}%   distinct alphas: ${s.distinctAlphas}`);
-  console.log(`  verdict                : ${s.blurShare < 0.05 ? 'CRISP' : 'SMOOTH — not shipped defaults'}`);
+  // Distinct alphas is the unambiguous signal: the palette has exactly five, and bilinear
+  // interpolation cannot produce only five. Blur share has a ~5% floor from candle bodies
+  // drawn semi-transparent over the heat, so it alone cannot separate the two.
+  console.log(`  verdict                : ${s.distinctAlphas <= 5 ? 'CRISP' : `SMOOTH (${s.distinctAlphas} alphas) — not shipped defaults`}`);
   console.log(`  wick control           : ${JSON.stringify(s.wick)}  (* = pressed)`);
   console.log(`  smooth control present : ${s.smoothControlPresent}`);
   console.log(`  stored settings        : ${JSON.stringify(s.settings)}`);

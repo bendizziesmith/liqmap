@@ -186,12 +186,25 @@ naturally to one bucket per row. Before this, one source pixel per bucket meant 
 nearest-neighbour sampling silently discarded every bucket that didn't land on an output
 row — levels flickered with zoom and the chart read as 1px static. The side panel is built
 on the same row grid, so bars are exactly as tall as the bands they describe. A "Smooth
-rendering" toggle (default **off**) softens band edges on the upscale. Measured live at
-BTCUSDT 4h, smoothing on left 57.3% of heat pixels interpolated rather than palette colours,
-**zero** hard class edges anywhere in the plot, and the five designed alphas spread across
-199 distinct values — soft, glowy, and with no definite band position, which also reads as
-misalignment. Off measures 2.9% interpolated, 15,501 hard edges, exactly the five alphas.
-Display only — tooltips read the raw buckets either way.
+The heat is **never** interpolated: `imageSmoothingEnabled = false` is a constant, not a
+preference. Measured live at BTCUSDT 4h, smoothing on left 57.3% of heat pixels interpolated
+rather than palette colours, **zero** hard class edges anywhere in the plot, and the five
+designed alphas spread across 199 distinct values — soft, glowy, and with no definite band
+position, which also reads as misalignment. Crisp measures exactly five alphas.
+
+Display rows have a **1px** floor. They exist to stop buckets being dropped by resampling —
+which is what the sum aggregation fixes — not to fatten bands; a 3px floor merged
+neighbouring levels into blocks and cost the per-candle structure the chart is read for.
+
+### Settings that cannot strand you
+
+Persisted settings are **versioned** (`SETTINGS_VERSION`). A plain merge of stored-over-
+defaults means the first value a user ever received wins forever, so a corrected default
+can never reach them — that is exactly how a build shipping `smoothRendering: true` kept
+rendering smooth long after the default became `false`. On load, `migrateSettings` drops
+keys the app no longer owns, fills in keys added since, and on a version bump resets model
+and render settings to shipped while carrying personal alert preferences forward. The build
+ID and a **Reset to defaults** control sit at the top of the Settings panel.
 
 ### Minimum-pool threshold
 
