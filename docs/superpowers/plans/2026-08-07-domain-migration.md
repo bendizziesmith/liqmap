@@ -42,3 +42,17 @@ unrecoverable-if-wrong (editing existing DNS records) is explicitly out of scope
     Name:  liqmap
     Value: liqmap.netlify.app
     TTL:   600 (or GoDaddy's default 1 hour)
+
+## Execution log (2026-08-07)
+
+| step | result |
+|---|---|
+| A | Deployed `5a4d806`. Canonical + OG/Twitter on the new origin; `origin.test.ts` green (514 tests). |
+| B | `custom_domain = liqmap.smithblock.ai` set via `netlify api updateSite`. **Failure mode 2 did not fire** — probed the alias 3x immediately after: `200`, empty `redirect_url`, content served. Netlify serves both hosts rather than 301-ing the subdomain, so no rollback was needed. |
+| — | Confirmed `getDnsZones` returns empty: no Netlify DNS zone for smithblock.ai, so the apex zone (and email) is structurally out of reach. NS still ns59/ns60.domaincontrol.com. MX + SPF re-checked after every step, unchanged. |
+| C | No registrar credentials present (no GoDaddy env vars, config, CLI, or netrc entry). Handed over the single CNAME. |
+| D | **Outstanding.** DNS polled for 10 min — `liqmap.smithblock.ai` does not resolve, so the cert cannot provision and the origin cannot be browser-verified. `scripts/finish-domain.sh` completes it unattended once the record exists. |
+
+The browser verifier (`scripts/verify-origin.mjs`) was smoke-tested against the alias and
+passes the full checklist there (heat 420k px, Live, Map ok, 1 SW controlling, no foreign
+SW, 0 console errors), so the harness is known-good before the new origin exists.
