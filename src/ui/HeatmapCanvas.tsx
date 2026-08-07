@@ -7,7 +7,7 @@ import { lastColumn } from '../engine/profile';
 import { needsOlder } from '../engine/history';
 import { buildPanelProfile } from '../engine/panelProfile';
 import { displayRows, rowOfBucket, sideSamples, smoothSeries } from '../engine/rows';
-import { bandTierTotals, filterBands, maxBandUsd, type VisibleBand } from '../engine/threshold';
+import { bandTierTotals, filterBands, maxBandUsd, minBandUsd, type VisibleBand } from '../engine/threshold';
 import { formatUsd, formatUsdPrecise } from '../engine/usd';
 import type { UsdScales } from '../engine/calibrate';
 import type { PriceFormatter } from './hooks/usePriceFormat';
@@ -67,7 +67,7 @@ interface Props {
   /** Hide pools below this est. USD. 0 shows everything. */
   minUsd: number;
   /** Live stats for the toolbar: slider ceiling, survivor count, per-tier visible totals. */
-  onStats: (s: { maxUsd: number; count: number; tiers: number[]; total: number }) => void;
+  onStats: (s: { maxUsd: number; minUsd: number; count: number; tiers: number[]; total: number }) => void;
 }
 
 type Region = 'plot' | 'priceAxis' | 'timeAxis' | 'panel';
@@ -374,6 +374,7 @@ export function HeatmapCanvas({
     const totals = bandTierTotals(survivors, nTiers);
     onStats({
       maxUsd: maxBandUsd(bands),
+      minUsd: minBandUsd(bands),
       count: survivors.length,
       tiers: totals.tiers,
       total: totals.total,

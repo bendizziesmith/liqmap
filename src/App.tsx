@@ -32,12 +32,15 @@ export default function App() {
   const [closedNonce, setClosedNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [minUsd, setMinUsd] = useThreshold(view.symbol, view.interval);
-  const [bandStats, setBandStats] = useState({ maxUsd: 0, count: 0, tiers: [] as number[], total: 0 });
+  const [bandStats, setBandStats] = useState({
+    maxUsd: 0, minUsd: 0, count: 0, tiers: [] as number[], total: 0,
+  });
   // Identity-stable so publishing stats cannot re-trigger the canvas's own effects.
   const onStats = useCallback(
-    (s: { maxUsd: number; count: number; tiers: number[]; total: number }) =>
+    (s: { maxUsd: number; minUsd: number; count: number; tiers: number[]; total: number }) =>
       setBandStats((prev) =>
-        prev.maxUsd === s.maxUsd && prev.count === s.count && prev.total === s.total &&
+        prev.maxUsd === s.maxUsd && prev.minUsd === s.minUsd &&
+        prev.count === s.count && prev.total === s.total &&
         prev.tiers.length === s.tiers.length && prev.tiers.every((v, i) => v === s.tiers[i])
           ? prev
           : s,

@@ -3,6 +3,7 @@ import {
   bandTierTotals,
   filterBands,
   maxBandUsd,
+  minBandUsd,
   sliderToUsd,
   usdToSlider,
   type VisibleBand,
@@ -148,5 +149,42 @@ describe('log slider mapping', () => {
     expect(sliderToUsd(-1, MAX)).toBe(0);
     expect(sliderToUsd(2, MAX)).toBeCloseTo(MAX, 6);
     expect(usdToSlider(MAX * 10, MAX)).toBe(1);
+  });
+});
+
+describe('log span anchored to the real pool range', () => {
+  it('spends the travel inside the range the pools actually occupy', () => {
+    // Measured live: BTC 4h pools ran $2.3M-$51.2M. With a fixed 3-decade slider the whole
+    // bottom half sat below the smallest pool and changed nothing.
+    const MIN = 2.3e6;
+    const MAX = 51.2e6;
+    expect(sliderToUsd(0.5, MAX, MIN)).toBeGreaterThan(MIN);
+    expect(sliderToUsd(0.5, MAX, MIN)).toBeLessThan(MAX);
+    // The floor of the travel is the smallest pool itself, not an arbitrary decade below.
+    // Asserted relatively: at these magnitudes an absolute tolerance says nothing.
+    expect(Math.abs(sliderToUsd(0.001, MAX, MIN) - MIN) / MIN).toBeLessThan(0.01);
+  });
+
+  it('still round-trips with a floor supplied', () => {
+    const MIN = 2.3e6;
+    const MAX = 51.2e6;
+    for (const usd of [2.4e6, 8e6, 20e6, 51.2e6]) {
+      expect(sliderToUsd(usdToSlider(usd, MAX, MIN), MAX, MIN)).toBeCloseTo(usd, 0);
+    }
+  });
+
+  it('falls back to a fixed span when the floor is unusable', () => {
+    const MAX = 1e6;
+    expect(sliderToUsd(1, MAX, 0)).toBeCloseTo(MAX, 6);
+    expect(sliderToUsd(0, MAX, 0)).toBe(0);
+    // A floor at or above the ceiling cannot define a span; the fallback keeps it monotone.
+    expect(sliderToUsd(0.5, MAX, MAX * 2)).toBeGreaterThan(0);
+    expect(sliderToUsd(0.5, MAX, MAX * 2)).toBeLessThan(MAX);
+  });
+
+  it('reports the smallest non-empty pool as the floor', () => {
+    expect(minBandUsd(SERIES)).toBe(12_000);
+    expect(minBandUsd([])).toBe(0);
+    expect(minBandUsd([band(0, [0])])).toBe(0);
   });
 });

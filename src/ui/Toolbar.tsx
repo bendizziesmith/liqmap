@@ -26,7 +26,7 @@ interface Props {
   minUsd: number;
   onMinUsd: (v: number) => void;
   /** Live stats for the visible, above-threshold bands. */
-  stats: { maxUsd: number; count: number; tiers: number[]; total: number };
+  stats: { maxUsd: number; minUsd: number; count: number; tiers: number[]; total: number };
 }
 
 export function Toolbar({
@@ -167,9 +167,9 @@ export function Toolbar({
               min={0}
               max={1}
               step={0.001}
-              value={usdToSlider(minUsd, stats.maxUsd)}
+              value={usdToSlider(minUsd, stats.maxUsd, stats.minUsd)}
               disabled={stats.maxUsd <= 0}
-              onChange={(e) => onMinUsd(sliderToUsd(Number(e.target.value), stats.maxUsd))}
+              onChange={(e) => onMinUsd(sliderToUsd(Number(e.target.value), stats.maxUsd, stats.minUsd))}
               aria-valuetext={minUsd > 0 ? `${formatUsd(minUsd)} minimum` : 'showing all pools'}
               title="Show only pools whose total is equal or greater than this value"
             />
