@@ -21,17 +21,6 @@ export interface Settings {
    */
   levelDecay: boolean;
   /**
-   * Soften band edges when the heat is upscaled, and the side panel's bars with them.
-   *
-   * OFF by default. Measured on the live chart at BTCUSDT 4h: with smoothing on, 57.3% of
-   * heat pixels were interpolated rather than palette colours, there were ZERO hard class
-   * edges anywhere in the plot, and the five designed alphas had become 199 distinct
-   * values. That is the "soft and glowy" report, and it also makes bands read as
-   * misaligned — a band whose edge is a multi-pixel gradient has no definite position.
-   * Crisp measures 2.9% interpolated, 15,501 hard edges, exactly [64,116,170,214,255].
-   */
-  smoothRendering: boolean;
-  /**
    * How a candle's wick clears resting levels.
    *
    * 'full' erases everything the candle range touched — the original rule, and the default.
@@ -59,15 +48,60 @@ export interface Settings {
   standingShare: StandingShareId;
 }
 
+/**
+ * Schema version for persisted settings.
+ *
+ * Bumped whenever a stored value could outlive a meaning it no longer has: a key is
+ * removed, or a shipped default changes. Without it, `{...defaults, ...stored}` means the
+ * first value a user ever received wins forever — which is exactly how a build that
+ * shipped `smoothRendering: true` kept rendering smooth for those users long after the
+ * default became `false`.
+ */
+export const SETTINGS_VERSION = 2;
+
 export const DEFAULT_SETTINGS: Settings = {
   alertMinScore: 70,
   alertDistancePct: 1.5,
   alertsEnabled: false,
   levelDecay: true,
-  smoothRendering: false,
   wickClearing: 'full',
   standingShare: 'highLeverage',
 };
+
+/**
+ * Settings the user genuinely chose for themselves, which survive a version bump.
+ *
+ * Everything else describes the MODEL or the RENDER — how levels are aged, cleared, split
+ * and drawn. Those defaults are the product's current best answer, and a bump means that
+ * answer changed, so stored values go back to shipped. Alert preferences carry no such
+ * meaning: a chosen alert distance is still what the user wants.
+ */
+const PERSONAL_KEYS = ['alertMinScore', 'alertDistancePct', 'alertsEnabled'] as const;
+
+/**
+ * Bring a stored settings blob onto the current schema.
+ *
+ * Drops keys the app no longer owns, fills in keys added since, resets model and render
+ * settings on a version bump, and always stamps the current version so the work happens
+ * exactly once.
+ */
+export function migrateSettings(raw: unknown): Settings & { v: number } {
+  const shipped = { ...DEFAULT_SETTINGS, v: SETTINGS_VERSION };
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return shipped;
+
+  const stored = raw as Record<string, unknown>;
+  const current = stored.v === SETTINGS_VERSION;
+
+  const out = { ...shipped } as Record<string, unknown>;
+  for (const key of Object.keys(DEFAULT_SETTINGS)) {
+    // On a bump only personal keys carry over; once current, every known key does.
+    const carries = current || (PERSONAL_KEYS as readonly string[]).includes(key);
+    if (carries && key in stored && typeof stored[key] === typeof shipped[key as keyof typeof shipped]) {
+      out[key] = stored[key];
+    }
+  }
+  return out as unknown as Settings & { v: number };
+}
 
 export type Tab = 'heatmap' | 'map';
 

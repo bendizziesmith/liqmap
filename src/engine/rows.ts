@@ -15,12 +15,12 @@
 /**
  * Shortest a display row is allowed to be.
  *
- * Three pixels is where a lone band reads as a band rather than as a scratch — measured on
- * the live chart, a 2px minimum still left the median strong-band run at 2px, which is
- * within one pixel of the noise this exists to remove. Anything below 2px can additionally
- * be dropped outright by fractional scaling.
+ * One pixel: a display row exists to stop buckets being DROPPED by resampling, not to make
+ * bands look chunky. A 3px floor merged neighbouring levels into one fat block and cost the
+ * per-candle structure the chart is read for — the aggregation still conserves mass at 1px,
+ * which was the whole reason it exists.
  */
-export const MIN_ROW_PX = 3;
+export const MIN_ROW_PX = 1;
 
 /**
  * How many rows to paint for `nBuckets` visible buckets across `heightPx` pixels.
@@ -48,28 +48,6 @@ export function rowOfBucket(bucket: number, b0: number, b1: number, rows: number
   return r < 0 ? 0 : r >= rows ? rows - 1 : r;
 }
 
-/**
- * A `0.25 / 0.5 / 0.25` pass over a series, or the series untouched when `on` is false.
- *
- * Used for bar lengths in the side panel so its bars soften in step with the heat. Render
- * only — the values a tooltip reports are never smoothed. Edge taps fold back onto the end
- * element rather than falling off, so the total is unchanged and the profile does not quietly
- * shrink each time it is smoothed.
- */
-export function smoothSeries(values: number[], on: boolean): number[] {
-  if (!on || values.length < 3) return values;
-
-  const out = new Array<number>(values.length).fill(0);
-  const last = values.length - 1;
-  for (let i = 0; i <= last; i++) {
-    const v = values[i];
-    if (v === 0) continue;
-    out[i] += v * 0.5;
-    out[i === 0 ? 0 : i - 1] += v * 0.25;
-    out[i === last ? last : i + 1] += v * 0.25;
-  }
-  return out;
-}
 
 /**
  * Collect the class-ladder samples from an aggregated row matrix, excluding one column.

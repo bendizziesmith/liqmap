@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MIN_ROW_PX, displayRows, rowOfBucket, sideSamples, smoothSeries } from './rows';
+import { MIN_ROW_PX, displayRows, rowOfBucket, sideSamples } from './rows';
 
 describe('displayRows', () => {
   it('gives one row per bucket when there is room for them', () => {
@@ -81,49 +81,6 @@ describe('rowOfBucket', () => {
   });
 });
 
-describe('smoothSeries', () => {
-  it('returns the input untouched when smoothing is off', () => {
-    const v = [0, 5, 0, 3];
-    expect(smoothSeries(v, false)).toEqual(v);
-  });
-
-  it('spreads a spike onto its neighbours', () => {
-    const out = smoothSeries([0, 0, 8, 0, 0], true);
-    expect(out[2]).toBeCloseTo(4, 6);
-    expect(out[1]).toBeCloseTo(2, 6);
-    expect(out[3]).toBeCloseTo(2, 6);
-    expect(out[0]).toBe(0);
-  });
-
-  it('conserves the total, so a smoothed profile is not a quieter one', () => {
-    const v = [1, 9, 4, 0, 0, 7, 2, 6];
-    const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
-    expect(sum(smoothSeries(v, true))).toBeCloseTo(sum(v), 6);
-  });
-
-  it('conserves the total at the edges too, by folding rather than dropping', () => {
-    const v = [10, 0, 0, 0, 10];
-    const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
-    expect(sum(smoothSeries(v, true))).toBeCloseTo(20, 6);
-  });
-
-  it('leaves a flat series flat', () => {
-    const out = smoothSeries([4, 4, 4, 4, 4], true);
-    for (const v of out) expect(v).toBeCloseTo(4, 6);
-  });
-
-  it('lowers the peak and raises the trough, which is what softens an edge', () => {
-    const v = [0, 0, 10, 10, 0, 0];
-    const out = smoothSeries(v, true);
-    expect(Math.max(...out)).toBeLessThan(10);
-    expect(out[1]).toBeGreaterThan(0);
-  });
-
-  it('copes with empty and single-element input', () => {
-    expect(smoothSeries([], true)).toEqual([]);
-    expect(smoothSeries([5], true)).toEqual([5]);
-  });
-});
 
 describe('sideSamples (intra-candle ladder stability)', () => {
   /** agg layout mirrors the canvas: row-major, agg[r * cols + c]. */

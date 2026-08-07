@@ -13,6 +13,8 @@ interface Props {
   formatPrice: PriceFormatter;
   colormap: ColormapId;
   onColormap: (id: ColormapId) => void;
+  /** Clear stored settings and return every option to its shipped value. */
+  onReset: () => void;
 }
 
 export function Settings({
@@ -24,6 +26,7 @@ export function Settings({
   formatPrice,
   colormap,
   onColormap,
+  onReset,
 }: Props) {
   if (!open) return null;
 
@@ -37,6 +40,22 @@ export function Settings({
           <h2>Settings</h2>
           <button type="button" className="btn btn--icon" onClick={onClose} aria-label="Close settings">
             <CloseIcon />
+          </button>
+        </div>
+
+        {/* Build first, not buried at the bottom: it is the one line that answers "am I
+            even looking at the version you just shipped?" */}
+        <div className="drawer__build">
+          <span>
+            build <code>{__BUILD_ID__}</code>
+          </span>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={onReset}
+            title="Clear stored settings and return every option to its shipped value"
+          >
+            Reset to defaults
           </button>
         </div>
 
@@ -114,7 +133,7 @@ export function Settings({
           <div className="field">
             <span className="field__label">Wick clearing</span>
             <div className="seg" role="group" aria-label="Wick clearing">
-              {(['partial', 'full'] as const).map((mode) => (
+              {(['full', 'partial'] as const).map((mode) => (
                 <button
                   key={mode}
                   type="button"
@@ -133,18 +152,6 @@ export function Settings({
             </span>
           </div>
 
-          <label className="field field--row">
-            <input
-              type="checkbox"
-              checked={values.smoothRendering}
-              onChange={(e) => onChange({ smoothRendering: e.target.checked })}
-            />
-            <span>Smooth rendering</span>
-          </label>
-          <span className="field__hint">
-            Softens band edges where the heat is scaled up, and the side panel's bars with
-            them. Off draws crisp blocky buckets. Display only — no figure changes either way.
-          </span>
         </section>
 
         <section className="drawer__section">
@@ -234,9 +241,6 @@ export function Settings({
             Figures are estimated USD notional, modelled from candle turnover and open
             interest — not exchange-reported open positions. Prices use each instrument's
             own tick size.
-          </p>
-          <p className="note note--build">
-            build <code>{__BUILD_ID__}</code>
           </p>
         </section>
       </aside>

@@ -6,7 +6,9 @@ import { lastColumn } from './engine/profile';
 import { priceToBucket } from './engine/grid';
 import { calibrationScales, sumActiveSides } from './engine/calibrate';
 import { scaleBandsTo100 } from './engine/alerts';
-import { BAND_WINDOW_PCT, DEFAULT_SETTINGS, DEFAULT_VIEW, PRESET_SYMBOLS, type Tab } from './config';
+import {
+  BAND_WINDOW_PCT, DEFAULT_SETTINGS, DEFAULT_VIEW, PRESET_SYMBOLS, migrateSettings, type Tab,
+} from './config';
 import { WICK_RETENTION } from './engine/seed';
 import { HeatmapCanvas } from './ui/HeatmapCanvas';
 import { MapView } from './ui/MapView';
@@ -27,7 +29,11 @@ import type { ColormapId } from './engine/classes';
 
 export default function App() {
   const [view, patchView] = usePersisted('liqmap.view', DEFAULT_VIEW);
-  const [settings, patchSettings] = usePersisted('liqmap.settings', DEFAULT_SETTINGS);
+  const [settings, patchSettings, setSettings] = usePersisted(
+    'liqmap.settings',
+    DEFAULT_SETTINGS,
+    migrateSettings,
+  );
   const [nonce, setNonce] = useState(0);
   const [closedNonce, setClosedNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -185,7 +191,6 @@ export default function App() {
             onNeedOlder={loadOlder}
             loadingOlder={loadingOlder}
             prependedCount={prependedCount}
-            smooth={settings.smoothRendering}
             minUsd={minUsd}
             onStats={onStats}
           />
@@ -230,6 +235,10 @@ export default function App() {
         formatPrice={formatPrice}
         colormap={colormap}
         onColormap={(id: ColormapId) => patchView({ colormap: id })}
+        onReset={() => {
+          setSettings(migrateSettings(null));
+          patchView({ colormap: DEFAULT_VIEW.colormap });
+        }}
       />
     </div>
   );

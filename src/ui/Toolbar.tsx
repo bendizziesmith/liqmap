@@ -211,13 +211,15 @@ export function Toolbar({
         <button type="button" className="btn btn--icon" onClick={onRefresh} aria-label="Refresh data">
           <RefreshIcon />
         </button>
+        {/* Labelled, not a bare glyph: users were not finding the panel at all. */}
         <button
           type="button"
-          className="btn btn--icon"
+          className="btn btn--ghost btn--settings"
           onClick={onSettings}
           aria-label="Open settings"
         >
           <SettingsIcon />
+          <span className="btn__label">Settings</span>
         </button>
       </div>
     </header>

@@ -6,7 +6,7 @@ import { COLORMAPS, aboveNoiseFloor, classAlpha, classBreaks, classOf, type Colo
 import { lastColumn } from '../engine/profile';
 import { needsOlder } from '../engine/history';
 import { buildPanelProfile } from '../engine/panelProfile';
-import { displayRows, rowOfBucket, sideSamples, smoothSeries } from '../engine/rows';
+import { displayRows, rowOfBucket, sideSamples } from '../engine/rows';
 import { bandTierTotals, filterBands, maxBandUsd, minBandUsd, type VisibleBand } from '../engine/threshold';
 import { formatUsd, formatUsdPrecise } from '../engine/usd';
 import type { UsdScales } from '../engine/calibrate';
@@ -62,8 +62,6 @@ interface Props {
   onNeedOlder: () => void;
   loadingOlder: boolean;
   prependedCount: number;
-  /** Soften band edges on upscale, and the panel's bar lengths with them. */
-  smooth: boolean;
   /** Hide pools below this est. USD. 0 shows everything. */
   minUsd: number;
   /** Live stats for the toolbar: slider ceiling, survivor count, per-tier visible totals. */
@@ -124,7 +122,6 @@ export function HeatmapCanvas({
   onNeedOlder,
   loadingOlder,
   prependedCount,
-  smooth,
   minUsd,
   onStats,
 }: Props) {
@@ -569,10 +566,14 @@ export function HeatmapCanvas({
     ctx.rect(0, 0, plot.w, plot.h);
     ctx.clip();
 
-    // Smoothing only bites on upscale, which is exactly where hard bucket edges look like
-    // deliberate structure that is not in the data.
-    ctx.imageSmoothingEnabled = smooth;
-    ctx.imageSmoothingQuality = 'high';
+    /*
+     * Never smooth the heat. Interpolation is not a preference here: measured on the live
+     * chart it turned 57% of heat pixels into colours that are not in the palette, erased
+     * every hard class edge in the plot, and spread five designed alpha steps across 199
+     * values. A band whose edge is a multi-pixel gradient has no definite price, which is
+     * why it also read as misalignment.
+     */
+    ctx.imageSmoothingEnabled = false;
     ctx.drawImage(raster, xLeft, toY(topPrice), cols * colW, toY(botPrice) - toY(topPrice));
 
     // ---- candles ----
@@ -611,10 +612,8 @@ export function HeatmapCanvas({
       ctx.fillRect(profileX, 0, profileW, plot.h);
 
       if (panel.rowMax > 0) {
-        // Bar LENGTHS are smoothed, not the row data: the tooltip has to keep reporting the
-        // levels that are actually there.
-        const lengths = smoothSeries(panel.rows.map((r) => r.total), smooth);
-        const lengthMax = Math.max(panel.rowMax, ...lengths);
+        const lengths = panel.rows.map((r) => r.total);
+        const lengthMax = panel.rowMax;
 
         for (let r = 0; r < panel.rows.length; r++) {
           const row = panel.rows[r];
@@ -824,7 +823,7 @@ export function HeatmapCanvas({
     }
   }, [
     map, view, active, panel, enabledTiers, livePrice, size, plot, hover,
-    interval, showProfile, profileW, profileX, axisX, rasterRows, rowGeom, smooth, minRaw,
+    interval, showProfile, profileW, profileX, axisX, rasterRows, rowGeom, minRaw,
   ]);
 
   // ---- interaction -------------------------------------------------------

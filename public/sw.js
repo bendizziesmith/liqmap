@@ -5,11 +5,24 @@
  * to touch anything else. Market data must never be cached — a liquidation map rebuilt
  * from yesterday's candles is worse than no map at all, because it looks current.
  */
-const CACHE = 'liqmap-shell-v1';
+/*
+ * Bump this when the shell precache must be rebuilt. `activate` deletes every cache whose
+ * name is not the current one, so a bump is also the eviction.
+ */
+const CACHE = 'liqmap-shell-v2';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(['./', './index.html', './manifest.webmanifest'])),
+    caches.open(CACHE).then((cache) =>
+      // `reload` bypasses the HTTP cache for the precache itself. Without it a fresh worker
+      // can install an index.html the browser had already cached, which is the shape of bug
+      // that leaves users on an old bundle with no way to pull the new one.
+      cache.addAll(
+        ['./', './index.html', './manifest.webmanifest'].map(
+          (u) => new Request(u, { cache: 'reload' }),
+        ),
+      ),
+    ),
   );
   self.skipWaiting();
 });
