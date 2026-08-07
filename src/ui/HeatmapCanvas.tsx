@@ -6,7 +6,7 @@ import { COLORMAPS, aboveNoiseFloor, classAlpha, classBreaks, classOf, type Colo
 import { lastColumn } from '../engine/profile';
 import { needsOlder } from '../engine/history';
 import { buildPanelProfile } from '../engine/panelProfile';
-import { displayRows, rowOfBucket, smoothSeries } from '../engine/rows';
+import { displayRows, rowOfBucket, sideSamples, smoothSeries } from '../engine/rows';
 import { formatUsd, formatUsdPrecise } from '../engine/usd';
 import type { UsdScales } from '../engine/calibrate';
 import type { PriceFormatter } from './hooks/usePriceFormat';
@@ -255,8 +255,52 @@ export function HeatmapCanvas({
     return displayRows(b1 - b0 + 1, plot.h);
   }, [map, view, plot.h]);
 
-  /** Height of one display row in CSS pixels. */
-  const rowH = plot.h > 0 ? plot.h / rasterRows : 1;
+  /**
+   * The one bucket-row-pixel mapping every surface shares.
+   *
+   * The raster blit scales its rows uniformly across the BUCKET price extent — which pokes
+   * slightly past the view on both ends, because the edge buckets contain p0/p1 rather than
+   * ending on them. Bars, curves, hover and tooltips must all use this same mapping: the
+   * audit that motivated it found the panel binning rows by naive `y / (plot.h/rows)` while
+   * the raster used the blit, so the two disagreed by up to a row and the same price read
+   * different dollars on different surfaces.
+   */
+  const rowGeom = useMemo(() => {
+    if (!map || !view || plot.h <= 0) return null;
+    const { grid } = map;
+    const b0 = priceToBucket(grid, view.p0);
+    const b1 = priceToBucket(grid, view.p1);
+    const topPrice = bucketToPrice(grid, b1) + grid.step / 2;
+    const botPrice = bucketToPrice(grid, b0) - grid.step / 2;
+    const yTop = priceToY(topPrice, view.p0, view.p1, plot.h);
+    const yBot = priceToY(botPrice, view.p0, view.p1, plot.h);
+    const span = yBot - yTop;
+    /** Display row under a screen y, or -1 outside the painted bucket extent. */
+    const rowAtY = (y: number): number => {
+      const f = (y - yTop) / span;
+      if (!(f >= 0) || f >= 1) return -1;
+      return Math.min(rasterRows - 1, Math.floor(f * rasterRows));
+    };
+    /** Per-tier sums over the buckets a display row owns, in one column. */
+    const rowTiers = (col: number, row: number): number[] => {
+      const out = new Array<number>(map.matrices.length).fill(0);
+      for (let b = b0; b <= b1; b++) {
+        if (rowOfBucket(b, b0, b1, rasterRows) !== row) continue;
+        for (let t = 0; t < map.matrices.length; t++) {
+          out[t] += map.matrices[t][col * grid.nBuckets + b];
+        }
+      }
+      return out;
+    };
+    return {
+      b0, b1, yTop, yBot,
+      rowAtY,
+      rowTiers,
+      rowTopY: (r: number) => yTop + (r / rasterRows) * span,
+      rowMidY: (r: number) => yTop + ((r + 0.5) / rasterRows) * span,
+      rowH: span / rasterRows,
+    };
+  }, [map, view, plot.h, rasterRows]);
 
   /** Per-display-row profile: bar mass, cumulative curves and hot-pocket threshold. */
   const panel = useMemo(() => {
@@ -329,7 +373,15 @@ export function HeatmapCanvas({
      * distribution costs cross-side comparability — which the tooltip and the side panel
      * still give exactly — and buys back the structure of whichever half is quieter.
      */
-    const priceBucket = livePrice != null && livePrice > 0 ? priceToBucket(grid, livePrice) : -1;
+    /*
+     * The split — and everything else the ladder depends on — must hold still between
+     * candle closes. The forming candle's OPEN is the newest price that cannot move until
+     * the candle closes, so the raster's side split keys on it rather than on the live
+     * tick: a tick that crosses a row boundary must move the price line, not re-grade
+     * history around itself.
+     */
+    const splitPrice = nCols > 0 ? map.candles[nCols - 1].open : null;
+    const priceBucket = splitPrice != null && splitPrice > 0 ? priceToBucket(grid, splitPrice) : -1;
 
     /*
      * Aggregate buckets into display rows before doing anything else.
@@ -358,19 +410,38 @@ export function HeatmapCanvas({
     /** Bucket at the middle of a display row, which decides the side it is judged on. */
     const centreBucket = (r: number) => b1 - Math.floor(((r + 0.5) * (b1 - b0 + 1)) / rasterRows);
 
-    const visible: number[] = [];
-    const above: number[] = [];
-    const below: number[] = [];
-    for (let r = 0; r < rasterRows; r++) {
-      const side = centreBucket(r);
-      for (let cx = 0; cx < cols; cx++) {
-        const v = agg[r * cols + cx];
-        if (v <= 0) continue;
-        visible.push(v);
-        if (side > priceBucket) above.push(v);
-        else if (side < priceBucket) below.push(v);
-      }
+    /*
+     * Ladder samples EXCLUDE the forming column. Its values change on every websocket
+     * reseed, and percentile breaks drawn from a drifting sample set flip any cell that
+     * sits near a break — measured live as ~1,500 historical pixels recolouring inside one
+     * candle. Excluded, the sample set between closes is bit-identical from tick to tick,
+     * so the ladder recomputes exactly when its inputs change — candle close, symbol or
+     * timeframe, zoom or pan, tier toggle — and never on a tick. The forming column still
+     * paints, judged against the stable ladder.
+     */
+    const formingCx = c1 === nCols ? nCols - 1 - c0 : -1;
+
+    /*
+     * Verification hook: the shared per-row series for the latest column, published so the
+     * live surface audit can assert that both tooltips and the raster derive from exactly
+     * these numbers. Raw engine units; the audit multiplies by the published scales itself.
+     */
+    if (formingCx >= 0) {
+      (window as unknown as Record<string, unknown>).__liqmapAudit = {
+        rows: Array.from({ length: rasterRows }, (_, r) => agg[r * cols + formingCx]),
+        rasterRows,
+        priceBucket,
+        b0,
+        b1,
+      };
+    } else {
+      (window as unknown as Record<string, unknown>).__liqmapAudit = null;
     }
+
+    const { visible, above, below } = sideSamples(
+      agg, rasterRows, cols, formingCx,
+      (r) => (centreBucket(r) > priceBucket ? 'above' : 'below'),
+    );
 
     // Too few samples on a side means price is at the edge of the window, where a per-side
     // scale would be drawn from a handful of cells. Fall back to one ladder for both.
@@ -489,9 +560,9 @@ export function HeatmapCanvas({
             classOf(row.total, r < panel.priceRow ? breaksAbove : breaksBelow) ===
             COLORMAPS.inferno.classColors.length - 1;
 
-          // A bar is exactly as tall as the band it describes, so the two line up.
-          const y = r * rowH;
-          const h = Math.max(1, rowH);
+          // A bar sits exactly where the blit puts the same row, so the two line up.
+          const y = rowGeom ? rowGeom.rowTopY(r) : r;
+          const h = Math.max(1, rowGeom ? rowGeom.rowH : 1);
 
           let x = axisX;
           for (let t = 0; t < row.tiers.length; t++) {
@@ -511,8 +582,9 @@ export function HeatmapCanvas({
       if (maxCum > 0) {
         const cumX = (v: number) => axisX - (v / maxCum) * usable;
 
-        // Rows are display rows, not pixels, so every y here goes through the row grid.
-        const yOfRow = (r: number) => (r + 0.5) * rowH;
+        // Rows are display rows, not pixels, so every y here goes through the shared
+        // blit mapping — the same one the raster and the bars use.
+        const yOfRow = (r: number) => (rowGeom ? rowGeom.rowMidY(r) : r + 0.5);
 
         const curve = (
           from: number,
@@ -675,7 +747,7 @@ export function HeatmapCanvas({
     }
   }, [
     map, view, active, panel, enabledTiers, livePrice, size, plot, hover,
-    interval, showProfile, profileW, profileX, axisX, rasterRows, rowH, smooth,
+    interval, showProfile, profileW, profileX, axisX, rasterRows, rowGeom, smooth,
   ]);
 
   // ---- interaction -------------------------------------------------------
@@ -809,10 +881,20 @@ export function HeatmapCanvas({
       }
 
       const price = yToPrice(my, view.p0, view.p1, plot.h);
-      const bucket = priceToBucket(map.grid, price);
       const colW = plot.w / (view.c1 - view.c0);
       const col = Math.max(0, Math.min(map.nCols - 1, Math.floor(view.c0 + mx / colW)));
-      const scores = map.matrices.map((m) => m[col * map.grid.nBuckets + bucket]);
+
+      /*
+       * Tooltip figures are the DISPLAY ROW's per-tier sums — the same buckets the raster
+       * cell paints and the panel bar draws. Reading the one raw bucket under the cursor,
+       * which this replaced, disagreed with both whenever a row spanned several buckets:
+       * the live audit measured $164.26K against $123.28K at the same screen position.
+       * Zoomed in to one bucket per row, this is the raw bucket again.
+       */
+      const row = rowGeom ? rowGeom.rowAtY(my) : -1;
+      const scores = row >= 0 && rowGeom
+        ? rowGeom.rowTiers(col, row)
+        : map.matrices.map(() => 0);
 
       setHover({
         x: mx,
@@ -822,10 +904,10 @@ export function HeatmapCanvas({
         col,
         scores,
         time: map.candles[col].start,
-        row: Math.max(0, Math.min(Math.floor(my / rowH), (panel?.rows.length ?? 1) - 1)),
+        row,
       });
     },
-    [map, view, plot, regionAt, panel, rowH],
+    [map, view, plot, regionAt, rowGeom],
   );
 
   const endPointer = useCallback((e: React.PointerEvent) => {
@@ -868,13 +950,32 @@ export function HeatmapCanvas({
 
   const ramp = COLORMAPS[colormapId] ?? COLORMAPS.inferno;
   const hoverTotal = hover ? hover.scores.reduce((a, s, i) => a + (enabledTiers[i] ? s : 0), 0) : 0;
-  const panelRow = hover && panel ? panel.rows[hover.row] : null;
-  // A level belongs to the side of the book it sits on, and each side is anchored to open
-  // interest separately.
-  const panelRowScale =
-    panelRow && panel ? (hover!.row > panel.priceRow ? usdScale.long : usdScale.short) : usdScale.long;
-  const plotRowScale =
-    hover && livePrice != null ? (hover.price < livePrice ? usdScale.long : usdScale.short) : usdScale.long;
+  const panelRow = hover && panel && hover.row >= 0 ? panel.rows[hover.row] : null;
+
+  /** Display row holding the live price — the split both tooltips choose their scale by. */
+  const priceRowLive = useMemo(() => {
+    if (!rowGeom || !map || livePrice == null || !(livePrice > 0)) return -1;
+    const pb = Math.min(rowGeom.b1, Math.max(rowGeom.b0, priceToBucket(map.grid, livePrice)));
+    return rowOfBucket(pb, rowGeom.b0, rowGeom.b1, rasterRows);
+  }, [rowGeom, map, livePrice, rasterRows]);
+
+  /*
+   * ONE side rule for every tooltip: rows below the price row (larger index) are long
+   * liquidations, the rest short — each side anchored to open interest separately. The plot
+   * tooltip used to pick its side from the cursor's exact price while the panel picked by
+   * row, so the two could disagree inside the price row itself.
+   */
+  // Companion to __liqmapAudit: the USD scales and row geometry live outside the paint
+  // effect on purpose — usdScale refreshes must never be able to trigger a repaint.
+  useEffect(() => {
+    (window as unknown as Record<string, unknown>).__liqmapAuditView = rowGeom
+      ? { yTop: rowGeom.yTop, yBot: rowGeom.yBot, rasterRows, scales: usdScale, priceRowLive }
+      : null;
+  }, [rowGeom, rasterRows, usdScale, priceRowLive]);
+
+  const rowScale = (r: number) => (r > priceRowLive ? usdScale.long : usdScale.short);
+  const panelRowScale = hover ? rowScale(hover.row) : usdScale.long;
+  const plotRowScale = hover ? rowScale(hover.row) : usdScale.long;
 
   return (
     <div className="chart" ref={wrapRef}>

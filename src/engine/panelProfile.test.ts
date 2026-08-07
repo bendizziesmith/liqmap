@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildPanelProfile } from './panelProfile';
-import { N_BUCKETS } from './grid';
+import { N_BUCKETS, priceToBucket } from './grid';
+import { rowOfBucket } from './rows';
 import type { Grid } from './types';
 
 /** Prices 0..1100, one unit per bucket, so a row index maps to a predictable price. */
@@ -79,8 +80,13 @@ describe('price row', () => {
     expect(buildPanelProfile(flatTiers(), ALL, grid, 0, 1100, 100, null).priceRow).toBe(50);
   });
 
-  it('puts a mid-range price mid-panel', () => {
-    expect(buildPanelProfile(flatTiers(), ALL, grid, 0, 1100, 100, 550).priceRow).toBe(50);
+  it('puts a mid-range price mid-panel, on the same row the raster gives its bucket', () => {
+    // Derived, not hard-coded: the price row IS the display row of the price bucket, so the
+    // marker, the raster split and the panel all agree. (Bucket 550 of span 0..1099 lands on
+    // row 49 of 100 — one off the naive pixel mapping, which is the point.)
+    const p = buildPanelProfile(flatTiers(), ALL, grid, 0, 1100, 100, 550);
+    expect(p.priceRow).toBe(rowOfBucket(priceToBucket(grid, 550), p.b0, p.b1, 100));
+    expect(Math.abs(p.priceRow - 50)).toBeLessThanOrEqual(1);
   });
 
   it('falls back to the middle when there is no price', () => {
@@ -224,5 +230,102 @@ describe('cumulative is a property of the book, not the viewport', () => {
     const maxLong = Math.max(...p.rows.map((r) => r.cumLong));
     // Everything below the price bucket: 1 unit per bucket.
     expect(maxLong).toBeGreaterThan(N_BUCKETS * 0.45);
+  });
+});
+
+describe('one shared per-row series (surface consistency)', () => {
+  /**
+   * The regression behind the audit: the panel used to bin buckets into rows by mapping
+   * each bucket's PRICE onto screen pixels while the raster binned by BUCKET INDEX
+   * (rowOfBucket). The two disagree at row boundaries whenever a row spans more than one
+   * bucket, so the panel bar and the heat cell at the same y described different buckets —
+   * measured live as $164.26K vs $123.28K at the same price.
+   */
+  const rasterRowSums = (
+    tiers: Float32Array[],
+    enabled: boolean[],
+    p0: number,
+    p1: number,
+    nRows: number,
+  ): number[] => {
+    const b0 = priceToBucket(grid, p0);
+    const b1 = priceToBucket(grid, p1);
+    const sums = new Array<number>(nRows).fill(0);
+    for (let b = b0; b <= b1; b++) {
+      let v = 0;
+      for (let t = 0; t < tiers.length; t++) if (enabled[t]) v += tiers[t][b];
+      sums[rowOfBucket(b, b0, b1, nRows)] += v;
+    }
+    return sums;
+  };
+
+  it('bins buckets into rows exactly as the raster does, at every aggregation level', () => {
+    const tiers = [new Float32Array(N_BUCKETS)];
+    // Awkward masses on consecutive buckets, where price-binning and index-binning differ.
+    for (let b = 0; b < N_BUCKETS; b++) tiers[0][b] = (b * 7919) % 101;
+
+    for (const nRows of [100, 228, 343, 550]) {
+      const p = buildPanelProfile(tiers, ALL, grid, 100, 700, nRows, 550);
+      const raster = rasterRowSums(tiers, ALL, 100, 700, nRows);
+      expect(p.rows).toHaveLength(nRows);
+      for (let r = 0; r < nRows; r++) {
+        expect(p.rows[r].total).toBeCloseTo(raster[r], 4);
+      }
+    }
+  });
+
+  it('agrees with the raster when rows span multiple buckets — the live-mismatch shape', () => {
+    // 601 visible buckets into 228 rows: most rows own 2-3 buckets, boundaries everywhere.
+    const tiers = [new Float32Array(N_BUCKETS)];
+    tiers[0][300] = 164_260; // the user's case in miniature: two neighbouring masses that
+    tiers[0][301] = 123_280; // must land in whichever row the RASTER puts them in.
+    const nRows = 228;
+    const p = buildPanelProfile(tiers, ALL, grid, 100, 700, nRows, 550);
+    const raster = rasterRowSums(tiers, ALL, 100, 700, nRows);
+    for (let r = 0; r < nRows; r++) expect(p.rows[r].total).toBeCloseTo(raster[r], 4);
+  });
+
+  it('keeps per-tier row values consistent with the binning, not just totals', () => {
+    const tiers = [new Float32Array(N_BUCKETS), new Float32Array(N_BUCKETS)];
+    for (let b = 200; b < 400; b++) {
+      tiers[0][b] = b % 13;
+      tiers[1][b] = b % 7;
+    }
+    const p = buildPanelProfile(tiers, [true, true], grid, 150, 450, 97, 300);
+    for (const row of p.rows) {
+      expect(row.total).toBeCloseTo(row.tiers[0] + row.tiers[1], 6);
+    }
+  });
+
+  it('reports each row price inside the price span its buckets cover', () => {
+    const tiers = flatTiers();
+    const nRows = 200;
+    const p = buildPanelProfile(tiers, ALL, grid, 100, 700, nRows, 550);
+    const b0 = priceToBucket(grid, 100);
+    const b1 = priceToBucket(grid, 700);
+    for (let r = 0; r < nRows; r++) {
+      // Row r owns buckets with rowOfBucket == r; its price must sit within their span.
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let b = b0; b <= b1; b++) {
+        if (rowOfBucket(b, b0, b1, nRows) !== r) continue;
+        lo = Math.min(lo, b);
+        hi = Math.max(hi, b);
+      }
+      const loPrice = grid.min + lo * grid.step;
+      const hiPrice = grid.min + (hi + 1) * grid.step;
+      expect(p.rows[r].price).toBeGreaterThanOrEqual(loPrice - 1e-9);
+      expect(p.rows[r].price).toBeLessThanOrEqual(hiPrice + 1e-9);
+    }
+  });
+
+  it('places the price row by bucket, matching the raster split', () => {
+    const tiers = flatTiers();
+    const nRows = 228;
+    const price = 412.3;
+    const p = buildPanelProfile(tiers, ALL, grid, 100, 700, nRows, price);
+    const b0 = priceToBucket(grid, 100);
+    const b1 = priceToBucket(grid, 700);
+    expect(p.priceRow).toBe(rowOfBucket(priceToBucket(grid, price), b0, b1, nRows));
   });
 });

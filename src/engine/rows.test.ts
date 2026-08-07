@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MIN_ROW_PX, displayRows, rowOfBucket, smoothSeries } from './rows';
+import { MIN_ROW_PX, displayRows, rowOfBucket, sideSamples, smoothSeries } from './rows';
 
 describe('displayRows', () => {
   it('gives one row per bucket when there is room for them', () => {
@@ -122,5 +122,50 @@ describe('smoothSeries', () => {
   it('copes with empty and single-element input', () => {
     expect(smoothSeries([], true)).toEqual([]);
     expect(smoothSeries([5], true)).toEqual([5]);
+  });
+});
+
+describe('sideSamples (intra-candle ladder stability)', () => {
+  /** agg layout mirrors the canvas: row-major, agg[r * cols + c]. */
+  const build = (rows: number, cols: number, fill: (r: number, c: number) => number) => {
+    const agg = new Float64Array(rows * cols);
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) agg[r * cols + c] = fill(r, c);
+    return agg;
+  };
+
+  it('splits samples by the row side rule', () => {
+    const agg = build(4, 2, (r) => r + 1);
+    const s = sideSamples(agg, 4, 2, -1, (r) => (r < 2 ? 'above' : 'below'));
+    expect(s.visible.length).toBe(8);
+    expect(s.above).toEqual([1, 1, 2, 2]);
+    expect(s.below).toEqual([3, 3, 4, 4]);
+  });
+
+  it('skips empty cells', () => {
+    const agg = build(2, 2, (r, c) => (r === 0 && c === 0 ? 5 : 0));
+    const s = sideSamples(agg, 2, 2, -1, () => 'above');
+    expect(s.visible).toEqual([5]);
+  });
+
+  it('excludes the forming column, so ticks cannot move the ladder', () => {
+    // THE regression for intra-candle flicker: between candle closes only the forming
+    // column's values change, so with it excluded the sample set — and therefore every
+    // class break — is bit-identical from tick to tick.
+    const before = build(3, 4, (r, c) => r * 10 + c + 1);
+    const after = before.slice();
+    for (let r = 0; r < 3; r++) after[r * 4 + 3] = 999_999; // a violent forming print
+
+    const side = (r: number): 'above' | 'below' => (r < 1 ? 'above' : 'below');
+    const a = sideSamples(before, 3, 4, 3, side);
+    const b = sideSamples(after, 3, 4, 3, side);
+    expect(b.visible).toEqual(a.visible);
+    expect(b.above).toEqual(a.above);
+    expect(b.below).toEqual(a.below);
+  });
+
+  it('includes the last column when no column is excluded (historical view)', () => {
+    const agg = build(2, 3, () => 7);
+    expect(sideSamples(agg, 2, 3, -1, () => 'above').visible.length).toBe(6);
+    expect(sideSamples(agg, 2, 3, 2, () => 'above').visible.length).toBe(4);
   });
 });

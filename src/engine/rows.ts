@@ -70,3 +70,38 @@ export function smoothSeries(values: number[], on: boolean): number[] {
   }
   return out;
 }
+
+/**
+ * Collect the class-ladder samples from an aggregated row matrix, excluding one column.
+ *
+ * The excluded column is the still-forming candle. Percentile breaks drawn from a sample
+ * set that includes it drift on every websocket reseed, and any cell whose value sits near
+ * a break then flips class — measured live as ~1,500 historical pixels recolouring within
+ * one candle. With the forming column excluded, the sample set between candle closes is
+ * bit-identical from tick to tick, so the ladder cannot move at all: it recomputes exactly
+ * when the inputs change — candle close, symbol or timeframe, zoom or pan, tier toggle.
+ * A violent forming print still paints (judged against the stable ladder, capped at the
+ * top class); it just cannot re-grade history around itself.
+ */
+export function sideSamples(
+  agg: ArrayLike<number>,
+  rows: number,
+  cols: number,
+  excludeCol: number,
+  sideOfRow: (row: number) => 'above' | 'below',
+): { visible: number[]; above: number[]; below: number[] } {
+  const visible: number[] = [];
+  const above: number[] = [];
+  const below: number[] = [];
+  for (let r = 0; r < rows; r++) {
+    const side = sideOfRow(r) === 'above' ? above : below;
+    for (let c = 0; c < cols; c++) {
+      if (c === excludeCol) continue;
+      const v = agg[r * cols + c];
+      if (v <= 0) continue;
+      visible.push(v);
+      side.push(v);
+    }
+  }
+  return { visible, above, below };
+}
