@@ -3,6 +3,8 @@ import type { Interval } from '../engine/types';
 import type { Tab } from '../config';
 import { INTERVALS, PRESET_SYMBOLS } from '../config';
 import { TIER_COLORS } from '../engine/colormap';
+import { formatUsd } from '../engine/usd';
+import { sliderToUsd, usdToSlider } from '../engine/threshold';
 import { PanelIcon, RefreshIcon, SettingsIcon } from './icons';
 
 interface Props {
@@ -20,6 +22,11 @@ interface Props {
   onToggleProfile: () => void;
   onRefresh: () => void;
   onSettings: () => void;
+  /** Minimum-pool threshold in est. USD; 0 shows everything. */
+  minUsd: number;
+  onMinUsd: (v: number) => void;
+  /** Live stats for the visible, above-threshold bands. */
+  stats: { maxUsd: number; count: number; tiers: number[]; total: number };
 }
 
 export function Toolbar({
@@ -37,6 +44,9 @@ export function Toolbar({
   onToggleProfile,
   onRefresh,
   onSettings,
+  minUsd,
+  onMinUsd,
+  stats,
 }: Props) {
   const [custom, setCustom] = useState('');
 
@@ -136,8 +146,46 @@ export function Toolbar({
               >
                 <i className="seg__swatch" aria-hidden="true" />
                 {t}×
+                {/* Est. USD this tier contributes to the pools currently visible and above
+                    the threshold — the number that answers "how much is actually there". */}
+                <b className="seg__total">{enabledTiers[i] ? formatUsd(stats.tiers[i] ?? 0) : '—'}</b>
               </button>
             ))}
+            <span className="seg__grand" title="Combined est. USD of every visible pool above the threshold">
+              Total <b>{formatUsd(stats.total)}</b>
+            </span>
+          </div>
+
+          <div className="thresh" role="group" aria-label="Minimum pool size">
+            <label className="thresh__label" htmlFor="min-pool">
+              Min pool
+            </label>
+            <input
+              id="min-pool"
+              className="thresh__slider"
+              type="range"
+              min={0}
+              max={1}
+              step={0.001}
+              value={usdToSlider(minUsd, stats.maxUsd)}
+              disabled={stats.maxUsd <= 0}
+              onChange={(e) => onMinUsd(sliderToUsd(Number(e.target.value), stats.maxUsd))}
+              aria-valuetext={minUsd > 0 ? `${formatUsd(minUsd)} minimum` : 'showing all pools'}
+              title="Show only pools whose total is equal or greater than this value"
+            />
+            <span className="thresh__readout">
+              <b>{minUsd > 0 ? formatUsd(minUsd) : 'All'}</b>
+              <span className="thresh__count">{stats.count} pools</span>
+            </span>
+            <button
+              type="button"
+              className="btn btn--ghost thresh__reset"
+              onClick={() => onMinUsd(0)}
+              disabled={minUsd <= 0}
+              title="Show all pools"
+            >
+              Reset
+            </button>
           </div>
         </>
       )}

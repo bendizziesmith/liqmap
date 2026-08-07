@@ -65,6 +65,7 @@ const baseProps = () => ({
   formatPrice: (p: number) => p.toFixed(4),
   colormapId: 'inferno' as const,
   usdScale: { long: 1, short: 1 },
+    minUsd: 0,
 });
 
 function render(props = baseProps()) {

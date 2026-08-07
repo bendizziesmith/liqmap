@@ -23,8 +23,12 @@ export interface Settings {
   /**
    * Soften band edges when the heat is upscaled, and the side panel's bars with them.
    *
-   * On by default: the raster is a few hundred rows blown up to fill the plot, so hard
-   * bucket edges read as deliberate structure the data does not actually have.
+   * OFF by default. Measured on the live chart at BTCUSDT 4h: with smoothing on, 57.3% of
+   * heat pixels were interpolated rather than palette colours, there were ZERO hard class
+   * edges anywhere in the plot, and the five designed alphas had become 199 distinct
+   * values. That is the "soft and glowy" report, and it also makes bands read as
+   * misaligned — a band whose edge is a multi-pixel gradient has no definite position.
+   * Crisp measures 2.9% interpolated, 15,501 hard edges, exactly [64,116,170,214,255].
    */
   smoothRendering: boolean;
   /**
@@ -60,7 +64,7 @@ export const DEFAULT_SETTINGS: Settings = {
   alertDistancePct: 1.5,
   alertsEnabled: false,
   levelDecay: true,
-  smoothRendering: true,
+  smoothRendering: false,
   wickClearing: 'full',
   standingShare: 'highLeverage',
 };

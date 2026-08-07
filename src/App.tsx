@@ -22,6 +22,7 @@ import { useWatchlist } from './ui/hooks/useWatchlist';
 import { useAlerts } from './ui/hooks/useAlerts';
 import { useMedia } from './ui/hooks/useMedia';
 import { usePriceFormats } from './ui/hooks/usePriceFormat';
+import { useThreshold } from './ui/hooks/useThreshold';
 import type { ColormapId } from './engine/classes';
 
 export default function App() {
@@ -30,6 +31,19 @@ export default function App() {
   const [nonce, setNonce] = useState(0);
   const [closedNonce, setClosedNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [minUsd, setMinUsd] = useThreshold(view.symbol, view.interval);
+  const [bandStats, setBandStats] = useState({ maxUsd: 0, count: 0, tiers: [] as number[], total: 0 });
+  // Identity-stable so publishing stats cannot re-trigger the canvas's own effects.
+  const onStats = useCallback(
+    (s: { maxUsd: number; count: number; tiers: number[]; total: number }) =>
+      setBandStats((prev) =>
+        prev.maxUsd === s.maxUsd && prev.count === s.count && prev.total === s.total &&
+        prev.tiers.length === s.tiers.length && prev.tiers.every((v, i) => v === s.tiers[i])
+          ? prev
+          : s,
+      ),
+    [],
+  );
 
   const { symbol, interval, enabledTiers, tab, showProfile, colormap } = view;
 
@@ -136,6 +150,9 @@ export default function App() {
         onToggleProfile={() => patchView({ showProfile: !showProfile })}
         onRefresh={() => setNonce((n) => n + 1)}
         onSettings={() => setSettingsOpen(true)}
+        minUsd={minUsd}
+        onMinUsd={setMinUsd}
+        stats={bandStats}
       />
 
       <Watchlist
@@ -166,6 +183,8 @@ export default function App() {
             loadingOlder={loadingOlder}
             prependedCount={prependedCount}
             smooth={settings.smoothRendering}
+            minUsd={minUsd}
+            onStats={onStats}
           />
         ) : (
           <MapView
@@ -178,6 +197,7 @@ export default function App() {
             decay={settings.levelDecay}
             wickRetention={wickRetention}
             standingShare={settings.standingShare}
+            minUsd={minUsd}
           />
         )}
       </main>

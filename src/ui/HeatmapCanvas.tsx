@@ -7,6 +7,7 @@ import { lastColumn } from '../engine/profile';
 import { needsOlder } from '../engine/history';
 import { buildPanelProfile } from '../engine/panelProfile';
 import { displayRows, rowOfBucket, sideSamples, smoothSeries } from '../engine/rows';
+import { bandTierTotals, filterBands, maxBandUsd, type VisibleBand } from '../engine/threshold';
 import { formatUsd, formatUsdPrecise } from '../engine/usd';
 import type { UsdScales } from '../engine/calibrate';
 import type { PriceFormatter } from './hooks/usePriceFormat';
@@ -63,6 +64,10 @@ interface Props {
   prependedCount: number;
   /** Soften band edges on upscale, and the panel's bar lengths with them. */
   smooth: boolean;
+  /** Hide pools below this est. USD. 0 shows everything. */
+  minUsd: number;
+  /** Live stats for the toolbar: slider ceiling, survivor count, per-tier visible totals. */
+  onStats: (s: { maxUsd: number; count: number; tiers: number[]; total: number }) => void;
 }
 
 type Region = 'plot' | 'priceAxis' | 'timeAxis' | 'panel';
@@ -120,6 +125,8 @@ export function HeatmapCanvas({
   loadingOlder,
   prependedCount,
   smooth,
+  minUsd,
+  onStats,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -304,7 +311,9 @@ export function HeatmapCanvas({
 
   /** Per-display-row profile: bar mass, cumulative curves and hot-pocket threshold. */
   const panel = useMemo(() => {
-    if (!showProfile || !active || !map || !view || plot.h <= 0) return null;
+    // Built whether or not the panel is drawn — it is the shared band series the threshold
+    // filter, the slider ceiling and the per-tier totals all read.
+    if (!active || !map || !view || plot.h <= 0) return null;
     return buildPanelProfile(
       active,
       enabledTiers,
@@ -314,7 +323,62 @@ export function HeatmapCanvas({
       rasterRows,
       livePrice,
     );
-  }, [showProfile, active, map, view, plot.h, rasterRows, enabledTiers, livePrice]);
+  }, [active, map, view, plot.h, rasterRows, enabledTiers, livePrice]);
+
+  /**
+   * The band series every surface reads: the current book's display rows, in est. USD.
+   *
+   * Rows below the price row are long liquidations, above are shorts, and the two sides are
+   * anchored to open interest separately — so a band's USD depends on which side it sits on.
+   */
+  const bands = useMemo<VisibleBand[]>(() => {
+    if (!panel) return [];
+    return panel.rows.map((r, i) => {
+      const scale = i > panel.priceRow ? usdScale.long : usdScale.short;
+      const usd = r.total * scale;
+      return { usd, total: usd, tiers: r.tiers.map((v) => v * scale) };
+    });
+  }, [panel, usdScale]);
+
+  /**
+   * The threshold as a RAW engine cutoff per side, snapshotted rather than live.
+   *
+   * The raster has to filter on raw matrix values, and converting the user's USD threshold
+   * needs the OI scale — but that scale refreshes on a timer, and anything live-varying in
+   * the paint re-grades history on a tick and breaks the intra-candle stability contract.
+   * So the conversion is pinned to the dataset, exactly like the class ladder: it moves when
+   * the user moves the slider or the dataset changes, never on a refresh.
+   */
+  const scaleSnapshot = useRef<UsdScales>({ long: 1, short: 1 });
+  useEffect(() => {
+    // Re-pin on dataset change, and once more when the real OI scale first arrives (it is
+    // {1,1} until the ticker responds, which would otherwise pin a meaningless cutoff).
+    scaleSnapshot.current = usdScale;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetKey, usdScale.long === 1 && usdScale.short === 1]);
+
+  const minRaw = useMemo(() => {
+    const s = scaleSnapshot.current;
+    if (!(minUsd > 0)) return { long: 0, short: 0 };
+    return {
+      long: s.long > 0 ? minUsd / s.long : 0,
+      short: s.short > 0 ? minUsd / s.short : 0,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [minUsd, resetKey]);
+
+  // Publish what the toolbar needs: slider ceiling, survivor count, per-tier visible totals.
+  const nTiers = map?.tiers.length ?? 0;
+  useEffect(() => {
+    const survivors = filterBands(bands, minUsd).filter((b) => b.total > 0);
+    const totals = bandTierTotals(survivors, nTiers);
+    onStats({
+      maxUsd: maxBandUsd(bands),
+      count: survivors.length,
+      tiers: totals.tiers,
+      total: totals.total,
+    });
+  }, [bands, minUsd, nTiers, onStats, usdScale]);
 
   const regionAt = useCallback(
     (mx: number, my: number): Region => {
@@ -471,12 +535,16 @@ export function HeatmapCanvas({
     const img = rctx.createImageData(cols, rasterRows);
     const px = img.data;
     for (let r = 0; r < rasterRows; r++) {
-      const breaks = centreBucket(r) > priceBucket ? breaksAbove : breaksBelow;
+      const above = centreBucket(r) > priceBucket;
+      const breaks = above ? breaksAbove : breaksBelow;
+      // The minimum-pool threshold, in this side's raw engine units.
+      const cut = above ? minRaw.short : minRaw.long;
       for (let cx = 0; cx < cols; cx++) {
         const v = agg[r * cols + cx];
         const i = (r * cols + cx) * 4;
-        // Below the floor is left fully transparent rather than painted as dim speckle.
-        if (!aboveNoiseFloor(v, breaks)) {
+        // Below the floor is left fully transparent rather than painted as dim speckle;
+        // below the user's threshold it is not a pool worth showing at all.
+        if (v < cut || !aboveNoiseFloor(v, breaks)) {
           px[i + 3] = 0;
           continue;
         }
@@ -550,6 +618,8 @@ export function HeatmapCanvas({
         for (let r = 0; r < panel.rows.length; r++) {
           const row = panel.rows[r];
           if (row.total <= 0) continue;
+          // Same threshold the raster applies, in the same raw units and on the same side.
+          if (row.total < (r < panel.priceRow ? minRaw.short : minRaw.long)) continue;
 
           // Same 0.68 gamma as the heat colours; without it the unswept shelf at the grid
           // edge owns the scale and everything near price is a hairline.
@@ -753,7 +823,7 @@ export function HeatmapCanvas({
     }
   }, [
     map, view, active, panel, enabledTiers, livePrice, size, plot, hover,
-    interval, showProfile, profileW, profileX, axisX, rasterRows, rowGeom, smooth,
+    interval, showProfile, profileW, profileX, axisX, rasterRows, rowGeom, smooth, minRaw,
   ]);
 
   // ---- interaction -------------------------------------------------------
