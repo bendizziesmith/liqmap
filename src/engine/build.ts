@@ -1,6 +1,7 @@
 import type { BuildOptions, Candle, HeatmapData, Interval, OiPoint } from './types';
 import { buildGrid, N_BUCKETS } from './grid';
-import { modeForInterval, tiersForMode } from './tiers';
+import { CAPITAL_SPLIT, STANDING_SHARES, modeForInterval, seedSplit, tiersForMode } from './tiers';
+import { HALF_LIFE_DAYS } from './decay';
 import { oiFactors } from './oi';
 import { clearCandle, seedCandle } from './seed';
 import { applyDecay, floorSparse, tierDecayFactors } from './decay';
@@ -43,6 +44,15 @@ export function buildHeatmap(
   const emptyBaseline = () => tiers.map(() => new Float32Array(N_BUCKETS));
   const decayFactors = options.decay ? tierDecayFactors(mode, tiers, interval) : null;
   const wickRetention = options.wickRetention ?? 0;
+  // 'current' must keep producing byte-identical output to the legacy constant, so it maps
+  // to CAPITAL_SPLIT directly rather than round-tripping through floats.
+  const seedWeights =
+    options.standingShare && options.standingShare !== 'current'
+      ? seedSplit(
+          STANDING_SHARES[options.standingShare],
+          tiers.map((t) => HALF_LIFE_DAYS[mode][t]),
+        )
+      : [...CAPITAL_SPLIT];
 
   if (nCols === 0) {
     return {
@@ -55,6 +65,7 @@ export function buildHeatmap(
       baseline: emptyBaseline(),
       lastOiFactor: 1,
       wickRetention,
+      seedWeights,
       decayFactors,
     };
   }
@@ -76,7 +87,7 @@ export function buildHeatmap(
 
     if (decayFactors) applyDecay(levels, decayFactors);
     clearCandle(levels, grid, candle, wickRetention);
-    seedCandle(levels, grid, tiers, candle, factors[i]);
+    seedCandle(levels, grid, tiers, candle, factors[i], seedWeights);
     if (decayFactors) floorSparse(levels);
 
     const offset = i * N_BUCKETS;
@@ -95,6 +106,7 @@ export function buildHeatmap(
     baseline,
     lastOiFactor: factors[nCols - 1],
     wickRetention,
+    seedWeights,
     decayFactors,
   };
 }
@@ -116,7 +128,7 @@ export function reseedLast(map: HeatmapData, candle: Candle): HeatmapData {
   const levels = map.baseline.map((l) => l.slice());
   if (map.decayFactors) applyDecay(levels, map.decayFactors);
   clearCandle(levels, map.grid, candle, map.wickRetention);
-  seedCandle(levels, map.grid, map.tiers, candle, map.lastOiFactor);
+  seedCandle(levels, map.grid, map.tiers, candle, map.lastOiFactor, map.seedWeights);
   if (map.decayFactors) floorSparse(levels);
 
   // Written in place. Copying the matrices would allocate ~18 MB per websocket tick, which

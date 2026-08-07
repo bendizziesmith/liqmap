@@ -85,6 +85,33 @@ export function Settings({
           </span>
 
           <div className="field">
+            <span className="field__label">Standing split</span>
+            <div className="seg" role="group" aria-label="Standing split">
+              {([
+                ['highLeverage', 'High-lev'],
+                ['flat', 'Flat'],
+                ['current', 'Legacy'],
+              ] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className="seg__btn"
+                  aria-pressed={values.standingShare === id}
+                  onClick={() => onChange({ standingShare: id })}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <span className="field__hint">
+              How the standing book divides across the leverage tiers. High-lev (15/20/30/35
+              toward 25×) matches how perp open interest actually skews and puts the walls
+              near price; Legacy reproduces the old behaviour, which parked ~61% of the book
+              in the far 3× shelf.
+            </span>
+          </div>
+
+          <div className="field">
             <span className="field__label">Wick clearing</span>
             <div className="seg" role="group" aria-label="Wick clearing">
               {(['partial', 'full'] as const).map((mode) => (

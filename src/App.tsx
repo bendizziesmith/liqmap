@@ -47,6 +47,7 @@ export default function App() {
     nonce + closedNonce,
     settings.levelDecay,
     wickRetention,
+    settings.standingShare,
   );
   const { loadOlder, loadingOlder, prependedCount } = fetched;
 
@@ -75,7 +76,13 @@ export default function App() {
   useEffect(() => {
     if (candleClosed > 0) setClosedNonce((n) => n + 1);
   }, [candleClosed]);
-  const watchBands = useWatchlist(symbols, interval, settings.levelDecay, wickRetention);
+  const watchBands = useWatchlist(
+    symbols,
+    interval,
+    settings.levelDecay,
+    wickRetention,
+    settings.standingShare,
+  );
   const livePrice = prices[symbol] ?? map?.candles.at(-1)?.close ?? null;
 
   /** Bands of the focused symbol's latest column, honouring the tier toggles. */
@@ -170,6 +177,7 @@ export default function App() {
             openInterestValue={openInterest[symbol] ?? 0}
             decay={settings.levelDecay}
             wickRetention={wickRetention}
+            standingShare={settings.standingShare}
           />
         )}
       </main>

@@ -72,14 +72,52 @@ Per the decision rule — pick a value only if it recovers the band without side
 stays available ('partial' = 0.5 retention) because the mechanism is real and measured;
 it just is not sufficient here.
 
-## What actually remains between us and the reference
+## H2 closed: recency-weighted seeding — rejected without measurement
 
-With the ladder question closed, the residual is model-family, not parameters:
+Weighting turnover by age at seed time double-counts what decay already does: a deposit
+seeded at time t and observed at time T carries `2^-((T-t)/halfLife)` — that IS the
+recency weight, applied continuously and per tier. Adding a second age weight at seed time
+would discount the same days twice. H2 is closed on that argument; no experiment needed.
 
-- TD's book at **0.95 is nearly empty** (tooltip: 25× $0.61M, all others 0) while ours
-  carries its heaviest below-price shelf at 0.88–0.96 (16–18% of book) — turnover seeded
-  from July's high-volume trading that TD evidently discards or re-weights. Their wall at
-  1.00–1.04 is consistent with **recent** (Aug 1–6) 25× entries only.
-- A recency-weighted seed (weight turnover by age at seed time, not only by decay
-  afterwards) would move mass from the July shelf toward the recent band — that is the
-  next hypothesis worth a measurement pass, ahead of any ladder change.
+## H3 confirmed: standing mass = seedWeight × halfLife (2026-08-07)
+
+Under decay, a tier fed a constant flow converges on `deposit / (1 - f)` — proportional to
+seedWeight × halfLife (asserted analytically and end-to-end in `decay.test.ts`). The
+legacy [0.35, 0.30, 0.20, 0.15] × [60, 30, 14, 5]d is therefore an **effective standing
+split of ~62/27/8/2 toward 3×** — measured live on XRPUSDT 4h as **67.3/25.4/6.2/1.0**
+(clearing trims the near tiers harder than the far shelf, explaining the residual). A 3×
+long liquidates 33% below entry; the standing book was parked far from price by
+construction — no seeding, clearing or lookback error involved.
+
+Per-tier at TD's quoted prices (same 3/5/10/25 ladder both sides):
+
+| price zone | TD (crop/tooltip) | ours, legacy split | ours, highLeverage |
+|---|---|---|---|
+| 0.95 | ~empty, 25×-only ($0.61M) | 78/7/14/0 toward 3×, 2.3% of book | 25/7/68/0, 2.4% |
+| 1.00–1.04 | dominant wall, 25×-heavy | 19/9/50/21, **0.59%** of book | 1/1/34/**64**, **4.19%** |
+
+### The standing-share sweep (decay on)
+
+| share | [1.00,1.04] | below-price rank | 0.88–0.96 shelf | extras 1.16–1.99 |
+|---|---|---|---|---|
+| current (62/27/8/2) | 0.59% | 5 | 16.6% (top cluster) | 51.0% |
+| flat (25/25/25/25) | 2.95% | 1 | 14.3% | 45.3% |
+| **highLeverage (15/20/30/35)** | **4.19%** | **1** | 12.8% | **41.6%** |
+
+`highLeverage` wins on every reference observable at once: the near wall becomes the top
+below-price cluster (TD's shape) at 64% 25× composition (TD's colour), the 0.95 shelf
+demotes (TD shows it nearly empty — the earlier "0.90–0.95 shelf HIT" was scored from the
+brief's description before the crop landed; the crop shows TD's below-price mass hugging
+0.98–1.045, so demoting the shelf is convergence, not damage), and the far-above extras
+improve. Seed weights derive as `share / halfLife` (renormalized), so conservation is
+exact — asserted, along with byte-identity of the 'current' option to the legacy build.
+
+**Shipped default: `standingShare: 'highLeverage'`** — the declared split now matches how
+perp open interest actually distributes across leverage brackets, and the accidental
+61/26/8/2 remains available as 'Legacy' for comparison.
+
+### H4 (shorter lookback): secondary, not shipped
+
+Truncating the walk (highLeverage, decay on): full 167d → 30d moves [1.00,1.04] only
+4.19% → 5.42% and the shelf 12.8% → 8.6%, with no rank changes. Decay already acts as a
+soft lookback; hard truncation refines at the margin. **H3 dominates.**

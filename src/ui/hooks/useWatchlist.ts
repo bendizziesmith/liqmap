@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Band, Interval } from '../../engine/types';
 import { buildHeatmap } from '../../engine/build';
+import type { StandingShareId } from '../../engine/tiers';
 import { topBands, bandsWithin } from '../../engine/bands';
 import { scaleBandsTo100 } from '../../engine/alerts';
 import { fetchKlines, fetchOpenInterest } from '../../data/rest';
@@ -17,12 +18,13 @@ async function bandsFor(
   interval: Interval,
   decay: boolean,
   wickRetention: number,
+  standingShare: StandingShareId,
 ): Promise<Band[]> {
   const candles = await fetchKlines(symbol, interval);
   if (candles.length === 0) return [];
 
   const oi = await fetchOpenInterest(symbol, interval, candles.length);
-  const map = buildHeatmap(candles, oi, interval, { decay, wickRetention });
+  const map = buildHeatmap(candles, oi, interval, { decay, wickRetention, standingShare });
 
   // The latest column is the only one that describes levels still pending right now.
   const bands = topBands(map.matrices, ALL_TIERS, map.grid, map.nCols, map.nCols - 1, 60);
@@ -42,6 +44,7 @@ export function useWatchlist(
   interval: Interval,
   decay = false,
   wickRetention = 0,
+  standingShare: StandingShareId = 'current',
 ) {
   const [bands, setBands] = useState<Record<string, Band[]>>({});
   const key = symbols.join(',');
@@ -57,8 +60,9 @@ export function useWatchlist(
           try {
             // Decay is part of the cache key: the same symbol under a different modelling
             // assumption is different data, not a cache hit.
-            const result = await cache.get(`${symbol}:${interval}:${decay}:${wickRetention}`, () =>
-              bandsFor(symbol, interval, decay, wickRetention),
+            const result = await cache.get(
+              `${symbol}:${interval}:${decay}:${wickRetention}:${standingShare}`,
+              () => bandsFor(symbol, interval, decay, wickRetention, standingShare),
             );
             if (!cancelled) setBands((b) => ({ ...b, [symbol]: result }));
           } catch {
@@ -72,7 +76,7 @@ export function useWatchlist(
       cancelled = true;
       timers.forEach(clearTimeout);
     };
-  }, [key, interval, decay, wickRetention]);
+  }, [key, interval, decay, wickRetention, standingShare]);
 
   return bands;
 }

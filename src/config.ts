@@ -1,5 +1,6 @@
 import type { Interval } from './engine/types';
 import type { ColormapId } from './engine/classes';
+import type { StandingShareId } from './engine/tiers';
 
 export const PRESET_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT'];
 
@@ -40,6 +41,18 @@ export interface Settings {
    * is kept for comparison.
    */
   wickClearing: 'full' | 'partial';
+  /**
+   * Declared per-tier share of the STANDING book (lowest leverage first); seed weights are
+   * derived as share / halfLife so the knob describes the book on screen, not the flow.
+   *
+   * The legacy seed split [0.35,0.30,0.20,0.15] times the half-lives is an accidental
+   * standing split of ~61/26/8/2 toward 3x — a book that lives 20-33% from price, which is
+   * why the far shelves dominated and the near-price walls the reference shows barely
+   * registered. 'highLeverage' (15/20/30/35) matches perp reality and the reference's
+   * near-price 25x walls; measured on XRPUSDT 4h it makes [1.00,1.04] the top below-price
+   * cluster (0.59% -> 4.19% of book) while the far-above extras IMPROVE (51% -> 42%).
+   */
+  standingShare: StandingShareId;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -49,6 +62,7 @@ export const DEFAULT_SETTINGS: Settings = {
   levelDecay: true,
   smoothRendering: true,
   wickClearing: 'full',
+  standingShare: 'highLeverage',
 };
 
 export type Tab = 'heatmap' | 'map';

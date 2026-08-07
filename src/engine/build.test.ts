@@ -471,3 +471,60 @@ describe('wick clearing in the walk', () => {
     expect(total).toBeCloseTo(only.turnover, 0);
   });
 });
+
+describe('standing-share reparameterization', () => {
+  const history = [
+    candle(0, 100, 103, 97, 101, 900_000),
+    candle(1, 101, 108, 99, 107, 1_400_000),
+    candle(2, 107, 110, 92, 94, 2_100_000),
+  ];
+
+  it("is byte-identical to the legacy build under 'current'", () => {
+    const base = buildHeatmap(history, [], '4h', { decay: true });
+    const cur = buildHeatmap(history, [], '4h', { decay: true, standingShare: 'current' });
+    for (let t = 0; t < base.tiers.length; t++) {
+      expect(Array.from(cur.matrices[t])).toEqual(Array.from(base.matrices[t]));
+    }
+  });
+
+  it('conserves total turnover exactly under every share', () => {
+    const only = candle(0, 100, 115, 90, 104, 5_000_000);
+    for (const share of ['current', 'flat', 'highLeverage'] as const) {
+      const map = buildHeatmap([only], [], '4h', { standingShare: share });
+      let total = 0;
+      for (const m of map.matrices) for (const v of m) total += v;
+      expect(total).toBeCloseTo(only.turnover, 0);
+    }
+  });
+
+  it('moves seed mass into the high-leverage tiers under highLeverage', () => {
+    const only = candle(0, 100, 115, 90, 104, 5_000_000);
+    const legacy = buildHeatmap([only], [], '4h');
+    const hot = buildHeatmap([only], [], '4h', { standingShare: 'highLeverage' });
+    const tierTotal = (m: typeof legacy, t: number) => {
+      let s = 0;
+      for (const v of m.matrices[t]) s += v;
+      return s;
+    };
+    const ti25 = legacy.tiers.indexOf(25);
+    const ti3 = legacy.tiers.indexOf(3);
+    expect(tierTotal(hot, ti25)).toBeGreaterThan(tierTotal(legacy, ti25) * 3);
+    expect(tierTotal(hot, ti3)).toBeLessThan(tierTotal(legacy, ti3) * 0.2);
+  });
+
+  it('keeps reseedLast on the same split as the walk', () => {
+    const map = buildHeatmap(history, [], '4h', { decay: true, standingShare: 'flat' });
+    const moved = { ...history[2], close: 95.5 };
+    const incremental = reseedLast(map, moved);
+    const rebuilt = buildHeatmap([history[0], history[1], moved], [], '4h', {
+      decay: true,
+      standingShare: 'flat',
+    });
+    const offset = (map.nCols - 1) * map.grid.nBuckets;
+    for (let t = 0; t < map.tiers.length; t++) {
+      for (let b = 0; b < map.grid.nBuckets; b++) {
+        expect(incremental.matrices[t][offset + b]).toBeCloseTo(rebuilt.matrices[t][offset + b], 3);
+      }
+    }
+  });
+});

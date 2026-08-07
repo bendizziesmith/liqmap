@@ -53,6 +53,8 @@ export interface HeatmapData {
   lastOiFactor: number;
   /** Wick retention the walk was built with, reused when the forming candle re-seeds. */
   wickRetention: number;
+  /** Seed split the walk used, reused when the forming candle re-seeds. */
+  seedWeights: number[];
   /**
    * Per-tier survival factor applied once per candle, or `null` when decay is off.
    *
@@ -77,6 +79,13 @@ export interface BuildOptions {
    * Candle bodies always clear fully; this softens only what a spike wicked through.
    */
   wickRetention?: number;
+  /**
+   * Declared standing split of the live book per tier (see STANDING_SHARES).
+   *
+   * Seed weights are derived as share / halfLife so the knob describes the book the user
+   * sees, not the flow that feeds it. Omitted = 'current', the legacy behaviour.
+   */
+  standingShare?: 'current' | 'flat' | 'highLeverage';
 }
 
 /** A contiguous run of high-score buckets, used by the watchlist and alerts. */

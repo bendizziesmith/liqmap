@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Candle, HeatmapData, Interval } from '../../engine/types';
 import { buildHeatmap, reseedLast } from '../../engine/build';
+import type { StandingShareId } from '../../engine/tiers';
 import { MAX_CANDLES, mergeOlder } from '../../engine/history';
 import { fetchKlines, fetchOpenInterest } from '../../data/rest';
 
@@ -45,6 +46,7 @@ export function useHeatmap(
   nonce: number,
   decay = false,
   wickRetention = 0,
+  standingShare: StandingShareId = 'current',
 ): HeatmapState {
   const [candles, setCandles] = useState<Candle[]>([]);
   const [oi, setOi] = useState<Parameters<typeof buildHeatmap>[1]>([]);
@@ -151,8 +153,10 @@ export function useHeatmap(
    */
   const map = useMemo(
     () =>
-      candles.length > 0 ? buildHeatmap(candles, oi, interval, { decay, wickRetention }) : null,
-    [candles, oi, interval, decay, wickRetention],
+      candles.length > 0
+        ? buildHeatmap(candles, oi, interval, { decay, wickRetention, standingShare })
+        : null,
+    [candles, oi, interval, decay, wickRetention, standingShare],
   );
 
   return {

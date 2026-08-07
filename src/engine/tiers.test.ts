@@ -1,12 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  modeForInterval,
-  tiersForMode,
-  CAPITAL_SPLIT,
-  ANCHOR_WEIGHTS,
-  longLiqPrice,
-  shortLiqPrice,
-} from './tiers';
+import { ANCHOR_WEIGHTS, CAPITAL_SPLIT, STANDING_SHARES, longLiqPrice, modeForInterval, seedSplit, shortLiqPrice, tiersForMode } from './tiers';
 
 describe('mode selection', () => {
   it('treats short intervals as scalping', () => {
@@ -58,5 +51,43 @@ describe('liquidation price math', () => {
   it('scales with entry price', () => {
     expect(longLiqPrice(64000, 25)).toBeCloseTo(64000 * 0.96, 6);
     expect(shortLiqPrice(64000, 25)).toBeCloseTo(64000 * 1.04, 6);
+  });
+});
+
+describe('seedSplit — standing share to seed weights', () => {
+  const HLS = [60, 30, 14, 5];
+
+  it('sums to 1 for every declared standing split, so conservation holds', () => {
+    for (const shares of Object.values(STANDING_SHARES)) {
+      const w = seedSplit(shares, HLS);
+      expect(w.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 10);
+    }
+  });
+
+  it("reproduces today's CAPITAL_SPLIT from the 'current' standing share", () => {
+    // 'current' is defined as the standing split the legacy weights produce, so deriving
+    // seed weights back from it must land on the legacy weights.
+    const w = seedSplit(STANDING_SHARES.current, HLS);
+    for (let t = 0; t < 4; t++) {
+      expect(w[t]).toBeCloseTo(CAPITAL_SPLIT[t], 2);
+    }
+  });
+
+  it('gives high-leverage tiers most of the seed under a flat standing target', () => {
+    // Equal standing footprints need the fast-decaying tiers re-fed hardest.
+    const w = seedSplit(STANDING_SHARES.flat, HLS);
+    expect(w[3]).toBeGreaterThan(0.55); // 25x
+    expect(w[0]).toBeLessThan(0.07); //   3x
+  });
+
+  it('actually produces the declared standing split at steady state', () => {
+    for (const shares of Object.values(STANDING_SHARES)) {
+      const w = seedSplit(shares, HLS);
+      const standing = w.map((wt, t) => wt * HLS[t]); // ~ w / (1 - f) up to a shared const
+      const total = standing.reduce((a, b) => a + b, 0);
+      standing.forEach((st, t) => {
+        expect(st / total).toBeCloseTo(shares[t] / shares.reduce((a, b) => a + b, 0), 6);
+      });
+    }
   });
 });

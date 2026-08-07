@@ -107,6 +107,7 @@ export function seedCandle(
   tiers: number[],
   candle: Candle,
   oiFactor: number,
+  split: readonly number[] = CAPITAL_SPLIT,
 ): void {
   const notional = candle.turnover * oiFactor;
   if (!(notional > 0)) return;
@@ -120,7 +121,7 @@ export function seedCandle(
   for (let t = 0; t < tiers.length; t++) {
     const leverage = tiers[t];
     const tierLevels = levels[t];
-    const tierNotional = CAPITAL_SPLIT[t] * notional;
+    const tierNotional = split[t] * notional;
 
     for (const [entry, anchorShare] of anchors) {
       if (entry <= 0) continue;

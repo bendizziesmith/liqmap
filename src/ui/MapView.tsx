@@ -4,6 +4,7 @@ import { lastColumn, liquidationProfile } from '../engine/profile';
 import { csvFilename, profileToCsv } from '../engine/profileCsv';
 import { MAP_BINS, MAP_SCALP_INTERVAL, MAP_SWING_INTERVAL } from '../config';
 import { calibrationScales, type UsdScales } from '../engine/calibrate';
+import type { StandingShareId } from '../engine/tiers';
 import { useHeatmap } from './hooks/useHeatmap';
 import { ProfileChart } from './ProfileChart';
 import type { PriceFormatter } from './hooks/usePriceFormat';
@@ -21,6 +22,8 @@ interface Props {
   decay: boolean;
   /** Wick retention fraction; must also match the heatmap tab. */
   wickRetention: number;
+  /** Declared standing split; must also match the heatmap tab. */
+  standingShare: StandingShareId;
 }
 
 /** Trigger a client-side download. No server round trip, so it works offline too. */
@@ -43,8 +46,11 @@ function useMode(
   oiValue: number,
   decay: boolean,
   wickRetention: number,
+  standingShare: StandingShareId,
 ) {
-  const { map, loading, error } = useHeatmap(symbol, interval, nonce, decay, wickRetention);
+  const { map, loading, error } = useHeatmap(
+    symbol, interval, nonce, decay, wickRetention, standingShare,
+  );
 
   const profile = useMemo(() => {
     if (!map || map.nCols === 0) return null;
@@ -81,9 +87,10 @@ export function MapView({
   openInterestValue,
   decay,
   wickRetention,
+  standingShare,
 }: Props) {
-  const scalp = useMode(symbol, MAP_SCALP_INTERVAL, livePrice, nonce, openInterestValue, decay, wickRetention);
-  const swing = useMode(symbol, MAP_SWING_INTERVAL, livePrice, nonce, openInterestValue, decay, wickRetention);
+  const scalp = useMode(symbol, MAP_SCALP_INTERVAL, livePrice, nonce, openInterestValue, decay, wickRetention, standingShare);
+  const swing = useMode(symbol, MAP_SWING_INTERVAL, livePrice, nonce, openInterestValue, decay, wickRetention, standingShare);
 
   const exportMode = useCallback(
     (mode: 'scalping' | 'swing', interval: Interval, profile: typeof scalp.profile, scale: UsdScales) => {
@@ -105,7 +112,7 @@ export function MapView({
         formatPrice={formatPrice}
         colormapId={colormapId}
         usdScale={scalp.usdScale}
-        datasetKey={`${symbol}:${MAP_SCALP_INTERVAL}:${nonce}:${decay}:${wickRetention}`}
+        datasetKey={`${symbol}:${MAP_SCALP_INTERVAL}:${nonce}:${decay}:${wickRetention}:${standingShare}`}
       />
 
       <ProfileChart
@@ -118,7 +125,7 @@ export function MapView({
         formatPrice={formatPrice}
         colormapId={colormapId}
         usdScale={swing.usdScale}
-        datasetKey={`${symbol}:${MAP_SWING_INTERVAL}:${nonce}:${decay}:${wickRetention}`}
+        datasetKey={`${symbol}:${MAP_SWING_INTERVAL}:${nonce}:${decay}:${wickRetention}:${standingShare}`}
       />
 
       <p className="map__help">
