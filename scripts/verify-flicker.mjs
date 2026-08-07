@@ -88,9 +88,12 @@ const lastColX0 = Math.floor(plotW - colW) - 2;
 const filterX0 = Math.floor(plotW - 2 * colW) - 2;
 
 // Price-line rows in EITHER capture are overlay movement the contract allows (the dashes
-// make them partial-width, so a full-width test misses them).
+// make them partial-width, so a full-width test misses them). The detector returns the TOP
+// of the 18px price tag; the dashed line runs through its centre 9px lower, so the whole
+// tag-height band around each capture's tag is the price-line allowance.
 const overlayRow = (y) =>
-  (a.priceY >= 0 && Math.abs(y - a.priceY) <= 2) || (b.priceY >= 0 && Math.abs(y - b.priceY) <= 2);
+  (a.priceY >= 0 && y >= a.priceY - 1 && y <= a.priceY + 20) ||
+  (b.priceY >= 0 && y >= b.priceY - 1 && y <= b.priceY + 20);
 
 let changedPlot = 0;
 let changedOutsideLast = 0;   // strict: everything left of the forming column
@@ -126,6 +129,22 @@ for (const y of rowsHit) {
   if (n > lastColX0 * 0.7) priceLineRows++;
 }
 
+// Diagnose each churned row: where it is, how much of it changed, and a sample transition.
+const rowDetail = [];
+for (const y of [...rowsHit].sort((p2, q) => p2 - q)) {
+  let n = 0;
+  let sample = null;
+  for (let x = 0; x < lastColX0; x++) {
+    const i = (y * W + x) * 4;
+    if (a.px[i] !== b.px[i] || a.px[i + 1] !== b.px[i + 1] ||
+        a.px[i + 2] !== b.px[i + 2] || a.px[i + 3] !== b.px[i + 3]) {
+      n++;
+      if (!sample && x > 40) sample = `x=${x} [${a.px[i]},${a.px[i + 1]},${a.px[i + 2]},${a.px[i + 3]}]->[${b.px[i]},${b.px[i + 1]},${b.px[i + 2]},${b.px[i + 3]}]`;
+    }
+  }
+  rowDetail.push({ y, n, sample });
+}
+
 const spread = byCol.filter((n) => n > 0).length;
 console.log(`\n${SYMBOL} ${INTERVAL} — ${LABEL} — two captures ${GAP_MS}ms apart, same view`);
 console.log('='.repeat(68));
@@ -138,4 +157,7 @@ console.log(`  distinct rows touched outside     : ${rowsHit.size} (of which ~fu
 console.log(`  8px column bins with any change   : ${spread} / ${Math.ceil(lastColX0 / 8)}`);
 console.log(`  verdict: ${changedHistory === 0 ? 'STABLE — history frozen' :
   spread > Math.ceil(lastColX0 / 8) * 0.5 ? 'GLOBAL RECOLOUR — ladder or scale moved' : 'localised churn'}`);
+for (const rd of rowDetail.slice(0, 12)) {
+  console.log(`    row y=${rd.y}  changed=${rd.n}px  ${rd.sample ?? ''}`);
+}
 console.log(`  view: prices [${p0.toFixed(4)}, ${p1.toFixed(4)}], cols [${c0.toFixed(1)}, ${c1.toFixed(1)}]`);

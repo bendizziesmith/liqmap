@@ -30,6 +30,13 @@ await page.evaluateOnNewDocument(
       symbol: sym, interval: iv, enabledTiers: [true, true, true, true],
       tab: 'heatmap', showProfile: true, colormap: 'inferno',
     }));
+    // Smoothing off for the cross-correlation: the 0.25/0.5/0.25 bar smoothing flattens
+    // the correlation peak across neighbouring offsets. Figures are identical either way —
+    // that is the point of the audit.
+    localStorage.setItem('liqmap.settings', JSON.stringify({
+      alertMinScore: 70, alertDistancePct: 1.5, alertsEnabled: false,
+      levelDecay: true, smoothRendering: false,
+    }));
   },
   SYMBOL, INTERVAL,
 );

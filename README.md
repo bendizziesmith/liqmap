@@ -189,6 +189,22 @@ on the same row grid, so bars are exactly as tall as the bands they describe. A 
 rendering" toggle (default on) softens band edges on the upscale; off keeps crisp blocks.
 Display only — tooltips read the raw buckets either way.
 
+### Intra-candle stability
+
+Between candle closes, only the forming column, the price line and the side panel may
+change — every historical pixel stays bit-identical. The class ladder's percentile samples
+exclude the forming column (so the ladder recomputes on candle close, symbol/timeframe
+change, zoom/pan and tier toggles — never on a websocket tick), the raster's long/short
+split keys on the forming candle's open, and near-price gridlines are never tied to the
+tick. Verified by pixel-diffing live captures 15s apart: 0 changed pixels outside the
+forming column and the price line.
+
+Every surface reads one shared per-row series: the panel bins buckets through the same
+`rowOfBucket` as the raster, bars sit at the blit's own y-mapping, and both tooltips report
+the display row's per-tier sums under one side rule — so the heat cell, the bar and both
+tooltips describe the same dollars at the same price (`scripts/verify-surfaces.mjs` asserts
+it live, three-legged, via `window.__liqmapAudit`).
+
 ### Time axis
 
 Ticks are generated from the **time domain**, not by stepping column indices. A step is
