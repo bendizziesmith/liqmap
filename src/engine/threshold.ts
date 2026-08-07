@@ -130,3 +130,17 @@ export function quantileOfUsd(sorted: number[], usd: number): number {
   }
   return Math.min(1, lo / n);
 }
+
+/**
+ * Hold a stored threshold inside the range of pools that actually exist.
+ *
+ * The threshold persists as an absolute USD figure, but pool values drift as the
+ * open-interest scale refreshes and as the view changes — so a threshold set at the top of
+ * the travel can end up above every pool and blank the chart. Clamping to the largest pool
+ * means the extreme of the slider always shows the single biggest level, which is the
+ * useful end state rather than an empty screen.
+ */
+export function clampToPools(minUsd: number, sorted: number[]): number {
+  if (!(minUsd > 0) || sorted.length === 0) return minUsd;
+  return Math.min(minUsd, sorted[sorted.length - 1]);
+}

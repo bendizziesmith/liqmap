@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   bandTierTotals,
+  clampToPools,
   filterBands,
   maxBandUsd,
   minBandUsd,
@@ -267,5 +268,29 @@ describe('percentile mapping (uniform sensitivity)', () => {
   it('puts a threshold above every pool at the top of the travel', () => {
     expect(quantileOfUsd(sorted, sorted[sorted.length - 1] * 10)).toBe(1);
     expect(quantileOfUsd(sorted, 0)).toBe(0);
+  });
+});
+
+describe('clampToPools', () => {
+  const sorted = [1e6, 5e6, 20e6, 51e6];
+
+  it('leaves a threshold inside the range alone', () => {
+    expect(clampToPools(20e6, sorted)).toBe(20e6);
+  });
+
+  it('never lets a stale threshold empty the chart', () => {
+    // The slider stores an absolute USD figure, but pool values drift as the OI scale
+    // refreshes — so a threshold set at yesterday's maximum can exceed today's and hide
+    // everything. Clamping to the largest pool keeps the top level visible.
+    expect(clampToPools(80e6, sorted)).toBe(51e6);
+    expect(sorted.filter((v) => v >= clampToPools(80e6, sorted))).toHaveLength(1);
+  });
+
+  it('passes zero through, so "show all" stays reachable', () => {
+    expect(clampToPools(0, sorted)).toBe(0);
+  });
+
+  it('is a no-op when there are no pools to clamp against', () => {
+    expect(clampToPools(1e6, [])).toBe(1e6);
   });
 });

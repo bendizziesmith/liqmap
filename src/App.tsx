@@ -25,6 +25,7 @@ import { useAlerts } from './ui/hooks/useAlerts';
 import { useMedia } from './ui/hooks/useMedia';
 import { usePriceFormats } from './ui/hooks/usePriceFormat';
 import { useThreshold } from './ui/hooks/useThreshold';
+import { clampToPools } from './engine/threshold';
 import type { ColormapId } from './engine/classes';
 
 export default function App() {
@@ -37,7 +38,7 @@ export default function App() {
   const [nonce, setNonce] = useState(0);
   const [closedNonce, setClosedNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [minUsd, setMinUsd] = useThreshold(view.symbol, view.interval);
+  const [storedMinUsd, setMinUsd] = useThreshold(view.symbol, view.interval);
   const [bandStats, setBandStats] = useState({
     sorted: [] as number[], count: 0, tiers: [] as number[], total: 0,
   });
@@ -129,6 +130,10 @@ export default function App() {
     const priceBucket = priceToBucket(map.grid, price);
     return calibrationScales(openInterest[symbol] ?? 0, sumActiveSides(lastColumn(map), priceBucket));
   }, [map, openInterest, symbol, livePrice]);
+
+  /* Held inside the pool range so the top of the slider shows the biggest level, not a
+     blank chart, once the OI scale has drifted under a stored threshold. */
+  const minUsd = clampToPools(storedMinUsd, bandStats.sorted);
 
   const alerts = useAlerts(symbol, livePrice, focusBands, settings, formatPrice);
 
