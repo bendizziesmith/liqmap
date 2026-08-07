@@ -7,7 +7,7 @@ import { lastColumn } from '../engine/profile';
 import { needsOlder } from '../engine/history';
 import { buildPanelProfile } from '../engine/panelProfile';
 import { displayRows, rowOfBucket, sideSamples } from '../engine/rows';
-import { bandTierTotals, filterBands, type VisibleBand } from '../engine/threshold';
+import { bandTierTotals, filterBands, rasterCutoff, type VisibleBand } from '../engine/threshold';
 import { formatUsd, formatUsdPrecise } from '../engine/usd';
 import type { UsdScales } from '../engine/calibrate';
 import type { PriceFormatter } from './hooks/usePriceFormat';
@@ -360,15 +360,12 @@ export function HeatmapCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey, usdScale.long === 1 && usdScale.short === 1]);
 
-  const minRaw = useMemo(() => {
-    const s = scaleSnapshot.current;
-    if (!(minUsd > 0)) return { long: 0, short: 0 };
-    return {
-      long: s.long > 0 ? minUsd / s.long : 0,
-      short: s.short > 0 ? minUsd / s.short : 0,
-    };
+  const minRaw = useMemo(
+    // Raster only. The side panel below deliberately ignores this — see rasterCutoff.
+    () => rasterCutoff(minUsd, scaleSnapshot.current),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [minUsd, resetKey]);
+    [minUsd, resetKey],
+  );
 
   // Publish what the toolbar needs: slider ceiling, survivor count, per-tier visible totals.
   const nTiers = map?.tiers.length ?? 0;
@@ -623,8 +620,12 @@ export function HeatmapCanvas({
         for (let r = 0; r < panel.rows.length; r++) {
           const row = panel.rows[r];
           if (row.total <= 0) continue;
-          // Same threshold the raster applies, in the same raw units and on the same side.
-          if (row.total < (r < panel.priceRow ? minRaw.short : minRaw.long)) continue;
+          /*
+           * No threshold here, on purpose. The panel is the complete current book — the
+           * baseline the thinned raster is read against — so it must not move when the
+           * slider does. Its bar lengths and cumulative curves are invariant to the
+           * threshold, which the live audit pixel-diffs to confirm.
+           */
 
           // Same 0.68 gamma as the heat colours; without it the unswept shelf at the grid
           // edge owns the scale and everything near price is a hairline.
@@ -1100,7 +1101,7 @@ export function HeatmapCanvas({
             </div>
           ))}
           <div className="tip__row tip__row--total">
-            <span>total est.</span>
+            <span>total est. · full book</span>
             <strong>{panelRow.total > 0 ? formatUsdPrecise(panelRow.total * panelRowScale) : '—'}</strong>
           </div>
           <div className="tip__row">
@@ -1140,7 +1141,11 @@ export function HeatmapCanvas({
             <span>total est.</span>
             <strong>{hoverTotal > 0 ? formatUsdPrecise(hoverTotal * plotRowScale) : '—'}</strong>
           </div>
-          <div className="tip__note">estimated USD, not exchange-reported</div>
+          <div className="tip__note">
+            {minUsd > 0
+              ? 'filtered view — the side panel shows the full book'
+              : 'estimated USD, not exchange-reported'}
+          </div>
         </div>
       )}
 

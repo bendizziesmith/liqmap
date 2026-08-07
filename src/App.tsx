@@ -210,7 +210,6 @@ export default function App() {
             decay={settings.levelDecay}
             wickRetention={wickRetention}
             standingShare={settings.standingShare}
-            minUsd={minUsd}
           />
         )}
       </main>

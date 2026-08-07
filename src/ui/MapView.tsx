@@ -24,8 +24,6 @@ interface Props {
   wickRetention: number;
   /** Declared standing split; must also match the heatmap tab. */
   standingShare: StandingShareId;
-  /** Hide pools below this est. USD — the same threshold the heatmap applies. */
-  minUsd: number;
 }
 
 /** Trigger a client-side download. No server round trip, so it works offline too. */
@@ -90,7 +88,6 @@ export function MapView({
   decay,
   wickRetention,
   standingShare,
-  minUsd,
 }: Props) {
   const scalp = useMode(symbol, MAP_SCALP_INTERVAL, livePrice, nonce, openInterestValue, decay, wickRetention, standingShare);
   const swing = useMode(symbol, MAP_SWING_INTERVAL, livePrice, nonce, openInterestValue, decay, wickRetention, standingShare);
@@ -115,7 +112,6 @@ export function MapView({
         formatPrice={formatPrice}
         colormapId={colormapId}
         usdScale={scalp.usdScale}
-        minUsd={minUsd}
         datasetKey={`${symbol}:${MAP_SCALP_INTERVAL}:${nonce}:${decay}:${wickRetention}:${standingShare}`}
       />
 
@@ -129,7 +125,6 @@ export function MapView({
         formatPrice={formatPrice}
         colormapId={colormapId}
         usdScale={swing.usdScale}
-        minUsd={minUsd}
         datasetKey={`${symbol}:${MAP_SWING_INTERVAL}:${nonce}:${decay}:${wickRetention}:${standingShare}`}
       />
 

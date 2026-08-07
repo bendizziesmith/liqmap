@@ -1,6 +1,13 @@
 /**
- * Surface-consistency audit: at the same price, the latest heatmap column, the side-panel
- * bar and both tooltips must describe the same number from the same buckets.
+ * Surface-consistency audit AT THRESHOLD 0.
+ *
+ * At the same price, the latest heatmap column, the side-panel bar and both tooltips must
+ * describe the same number from the same buckets.
+ *
+ * This holds only with no minimum-pool threshold set. Above zero the heatmap is filtered
+ * and the panel is not — deliberately, since the panel is the complete book the thinned
+ * heatmap is read against — so the two differ by design. That case is covered by
+ * verify-panel-invariance.mjs, which asserts the panel does not move at all.
  *
  * Hovers the plot over the LAST column and the side panel at the same y for N prices
  * spanning the visible range, reads both tooltips, and — when the build exposes it — the
@@ -30,6 +37,8 @@ await page.evaluateOnNewDocument(
       symbol: sym, interval: iv, enabledTiers: [true, true, true, true],
       tab: 'heatmap', showProfile: true, colormap: 'inferno',
     }));
+    // The comparison is only meaningful unfiltered.
+    localStorage.removeItem(`liqmap.threshold.${sym}:${iv}`);
     // Smoothing off for the cross-correlation: the 0.25/0.5/0.25 bar smoothing flattens
     // the correlation peak across neighbouring offsets. Figures are identical either way —
     // that is the point of the audit.

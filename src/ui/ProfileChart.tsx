@@ -34,8 +34,6 @@ interface Props {
   colormapId: ColormapId;
   /** Per-side multipliers denominating displayed USD in open interest. */
   usdScale: UsdScales;
-  /** Hide pools below this est. USD — the same threshold the heatmap applies. */
-  minUsd: number;
   /**
    * Identity of the underlying book. The default window is re-derived only when this
    * changes — never on the new profile object a live price tick produces.
@@ -60,7 +58,6 @@ export function ProfileChart({
   formatPrice,
   colormapId,
   usdScale,
-  minUsd,
   datasetKey,
 }: Props) {
   const ramp = COLORMAPS[colormapId] ?? COLORMAPS.inferno;
@@ -140,28 +137,6 @@ export function ProfileChart({
   /** Top edge of the brush strip — the only interactive region on this chart. */
   const brushTop = useMemo(() => plot.h + AXIS_H + BRUSH_GAP, [plot.h]);
 
-  /**
-   * The minimum-pool threshold in raw engine units, per side.
-   *
-   * Bins hold raw values and each side is anchored to open interest separately, so the
-   * user's single USD cut-off becomes two raw cut-offs — the same conversion the heatmap
-   * does, so both surfaces hide exactly the same pools.
-   */
-  const minRaw = useMemo(
-    () => ({
-      long: minUsd > 0 && usdScale.long > 0 ? minUsd / usdScale.long : 0,
-      short: minUsd > 0 && usdScale.short > 0 ? minUsd / usdScale.short : 0,
-    }),
-    [minUsd, usdScale],
-  );
-
-  /** Whether a bin clears the threshold on its own side of the book. */
-  const passes = useCallback(
-    (i: number, total: number) =>
-      total >= (profile && i < profile.priceBinIndex ? minRaw.long : minRaw.short),
-    [profile, minRaw],
-  );
-
   /** Peak bar height and cumulative within the visible slice, so zooming reveals detail. */
   const visibleMax = useMemo(() => {
     if (!profile || !range) return { total: 0, cum: 0 };
@@ -170,12 +145,12 @@ export function ProfileChart({
     for (let i = range[0]; i < range[1]; i++) {
       const b = profile.bins[i];
       if (!b) continue;
-      if (b.total > total && passes(i, b.total)) total = b.total;
+      if (b.total > total) total = b.total;
       const c = Math.max(b.cumLong, b.cumShort);
       if (c > cum) cum = c;
     }
     return { total, cum };
-  }, [profile, range, passes]);
+  }, [profile, range]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -231,7 +206,7 @@ export function ProfileChart({
     const gap = barW > 3 ? 1 : 0;
     for (let i = i0; i < i1; i++) {
       const b = profile.bins[i];
-      if (!b || b.total <= 0 || !passes(i, b.total)) continue;
+      if (!b || b.total <= 0) continue;
       let y = plot.h;
       for (let t = 0; t < b.tiers.length; t++) {
         const v = b.tiers[t];
@@ -334,7 +309,7 @@ export function ProfileChart({
     const allMax = profile.maxTotal || 1;
     for (let i = 0; i < nBins; i++) {
       const b = profile.bins[i];
-      if (!b || b.total <= 0 || !passes(i, b.total)) continue;
+      if (!b || b.total <= 0) continue;
       const x = (i / nBins) * plot.w;
       const h = (b.total / allMax) * (BRUSH_H - 2);
       ctx.fillStyle = 'rgba(245,158,11,0.55)';
@@ -371,7 +346,7 @@ export function ProfileChart({
       ctx.stroke();
       ctx.restore();
     }
-  }, [profile, range, plot, size, visibleMax, hover, nBins, formatPrice, ramp, usdScale, passes]);
+  }, [profile, range, plot, size, visibleMax, hover, nBins, formatPrice, ramp, usdScale]);
 
   /**
    * All range control lives on the brush.
@@ -577,7 +552,7 @@ export function ProfileChart({
               </div>
             ))}
             <div className="tip__row tip__row--total">
-              <span>total est.</span>
+              <span>total est. · full book</span>
               <strong>{hover.bin.total > 0 ? formatUsdPrecise(hover.bin.total * hoverScale) : '—'}</strong>
             </div>
             <div className="tip__row">

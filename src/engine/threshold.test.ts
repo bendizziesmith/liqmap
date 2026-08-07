@@ -7,6 +7,7 @@ import {
   minBandUsd,
   poolQuantile,
   quantileOfUsd,
+  rasterCutoff,
   sliderToUsd,
   usdToSlider,
   type VisibleBand,
@@ -292,5 +293,34 @@ describe('clampToPools', () => {
 
   it('is a no-op when there are no pools to clamp against', () => {
     expect(clampToPools(1e6, [])).toBe(1e6);
+  });
+});
+
+describe('rasterCutoff — the one place the threshold is allowed to bite', () => {
+  const scales = { long: 2, short: 5 };
+
+  it('is zero on both sides when no threshold is set, so nothing is hidden', () => {
+    expect(rasterCutoff(0, scales)).toEqual({ long: 0, short: 0 });
+    expect(rasterCutoff(-1, scales)).toEqual({ long: 0, short: 0 });
+  });
+
+  it('converts the USD threshold into each side own raw engine units', () => {
+    // Each side is anchored to open interest separately, so one USD cut-off is two raw
+    // cut-offs — otherwise the same dollar figure would hide different amounts per side.
+    expect(rasterCutoff(100, scales)).toEqual({ long: 50, short: 20 });
+  });
+
+  it('refuses to filter a side whose scale is not yet known', () => {
+    // usdScale is {1,1} until the ticker responds; a zero or missing scale must not be
+    // turned into a divide-by-zero cutoff that blanks the chart on load.
+    expect(rasterCutoff(100, { long: 0, short: 5 })).toEqual({ long: 0, short: 20 });
+    expect(rasterCutoff(100, { long: 0, short: 0 })).toEqual({ long: 0, short: 0 });
+  });
+
+  it('scales linearly with the threshold', () => {
+    const a = rasterCutoff(100, scales);
+    const b = rasterCutoff(300, scales);
+    expect(b.long).toBeCloseTo(a.long * 3, 9);
+    expect(b.short).toBeCloseTo(a.short * 3, 9);
   });
 });

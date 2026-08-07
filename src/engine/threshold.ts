@@ -144,3 +144,26 @@ export function clampToPools(minUsd: number, sorted: number[]): number {
   if (!(minUsd > 0) || sorted.length === 0) return minUsd;
   return Math.min(minUsd, sorted[sorted.length - 1]);
 }
+
+/**
+ * The minimum-pool threshold as a raw per-side cutoff, for the RASTER ONLY.
+ *
+ * The side panel and the Map profile are deliberately never filtered: they are the complete
+ * current book, the baseline the thinned heatmap is read against. Filter them too and there
+ * is nothing left on screen showing what the threshold took away. This function exists so
+ * that policy has exactly one call site.
+ *
+ * Each side converts through its own open-interest scale — one USD figure is two raw
+ * cutoffs — and a side whose scale is not yet known is left unfiltered rather than being
+ * divided by zero.
+ */
+export function rasterCutoff(
+  minUsd: number,
+  scales: { long: number; short: number },
+): { long: number; short: number } {
+  if (!(minUsd > 0)) return { long: 0, short: 0 };
+  return {
+    long: scales.long > 0 ? minUsd / scales.long : 0,
+    short: scales.short > 0 ? minUsd / scales.short : 0,
+  };
+}
