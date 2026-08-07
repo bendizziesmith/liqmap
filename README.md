@@ -186,8 +186,27 @@ naturally to one bucket per row. Before this, one source pixel per bucket meant 
 nearest-neighbour sampling silently discarded every bucket that didn't land on an output
 row — levels flickered with zoom and the chart read as 1px static. The side panel is built
 on the same row grid, so bars are exactly as tall as the bands they describe. A "Smooth
-rendering" toggle (default on) softens band edges on the upscale; off keeps crisp blocks.
+rendering" toggle (default **off**) softens band edges on the upscale. Measured live at
+BTCUSDT 4h, smoothing on left 57.3% of heat pixels interpolated rather than palette colours,
+**zero** hard class edges anywhere in the plot, and the five designed alphas spread across
+199 distinct values — soft, glowy, and with no definite band position, which also reads as
+misalignment. Off measures 2.9% interpolated, 15,501 hard edges, exactly the five alphas.
 Display only — tooltips read the raw buckets either way.
+
+### Minimum-pool threshold
+
+A log-scaled slider hides every pool below a chosen est. USD, so the chart thins to only
+the levels worth reacting to. Its travel spans the *actual* pool range on screen (smallest
+to largest) rather than a fixed decade count — measured on BTCUSDT 4h the pools ran
+$2.3M–$51.2M, so a fixed 3-decade slider did nothing across its whole bottom half. Position
+0 is a true zero: "show all" is reachable, not merely approached.
+
+The filter runs on the shared band series, not per renderer, so the heatmap raster, the side
+panel and the Map hide exactly the same pools. The USD cut-off is converted to raw engine
+units per side from a scale *snapshot* pinned to the dataset — a live OI-varying input in
+the paint would re-grade history on a tick and break the stability contract below. Each tier
+chip carries its est. USD among the visible, above-threshold pools, with a combined total,
+and the threshold is remembered per symbol and timeframe.
 
 ### Intra-candle stability
 

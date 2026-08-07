@@ -69,8 +69,9 @@ const rows = await page.evaluate(async (nPoints) => {
     };
   };
 
-  const audit = window.__liqmapAudit ?? null;
-  const auditView = window.__liqmapAuditView ?? null;
+  // Re-read per point, not once up front: the OI scale refreshes on a timer, so a snapshot
+  // taken before a 20-point sweep goes stale mid-run and reports a divergence that is the
+  // probe's own lag rather than the app's.
   const out = [];
   for (let i = 0; i < nPoints; i++) {
     const y = ((i + 0.5) / nPoints) * plotH;
@@ -80,6 +81,8 @@ const rows = await page.evaluate(async (nPoints) => {
     const panelTip = await hoverAt(plotW + PROFILE_W / 2, y);
 
     // The shared per-row series the tooltips must derive from: rows[r] * sideScale.
+    const audit = window.__liqmapAudit ?? null;
+    const auditView = window.__liqmapAuditView ?? null;
     let shared = null;
     if (audit && auditView) {
       const f = (y - auditView.yTop) / (auditView.yBot - auditView.yTop);
@@ -105,6 +108,8 @@ const rows = await page.evaluate(async (nPoints) => {
    * Pixel cross-correlation: panel bar length per display row (measured from pixels)
    * against the shared row series. If the surfaces are aligned the peak sits at offset 0.
    */
+  const audit = window.__liqmapAudit ?? null;
+  const auditView = window.__liqmapAuditView ?? null;
   let xcorr = null;
   if (audit && auditView) {
     const ctx = cv.getContext('2d');
