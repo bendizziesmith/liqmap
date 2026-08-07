@@ -11,7 +11,7 @@
 import puppeteer from 'puppeteer-core';
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const BASE = process.argv[2] ?? 'https://liqmap.netlify.app/';
+const BASE = process.argv[2] ?? 'https://liqmap.smithblock.ai/';
 const SYMBOL = process.argv[3] ?? 'XRPUSDT';
 const INTERVAL = process.argv[4] ?? '1d';
 

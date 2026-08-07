@@ -10,7 +10,7 @@
 import puppeteer from 'puppeteer-core';
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const BASE = process.argv[2] ?? 'https://liqmap.netlify.app/';
+const BASE = process.argv[2] ?? 'https://liqmap.smithblock.ai/';
 
 const browser = await puppeteer.launch({
   executablePath: CHROME,

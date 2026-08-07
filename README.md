@@ -1,6 +1,6 @@
 # LiqMap
 
-**Live: [liqmap.netlify.app](https://liqmap.netlify.app)**
+**Live: [liqmap.smithblock.ai](https://liqmap.smithblock.ai)** (liqmap.netlify.app remains as an alias)
 
 A crypto liquidation heatmap that runs entirely in your browser. It pulls public Bybit v5
 market data, computes where leveraged positions would be liquidated, and paints the result
